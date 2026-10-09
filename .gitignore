@@ -5,6 +5,9 @@ host-data/
 # 探测/抓包产物：可能含源站地址与凭据字段，按需 force-add
 fixtures/
 
+# libmpv 播放内核的预编译包（28 个 .xcframework，~200MB，CI 现下）
+ios/Frameworks/mpvkit/
+
 # macOS / Xcode
 .DS_Store
 build/

@@ -11,9 +11,10 @@
 #   - CI：由 .github/workflows/ios.yml 自动下载到 ios/Frameworks/
 #   - 本机（有 Mac）：手动下载后放到 ios/Frameworks/（见 docs/08-P2操作卡.md 第 1 步）
 #
-# libmpv（播放内核，P6）：走 SwiftPM 拉 mpvkit/MPVKit 的**预编译二进制包**（LGPL 版）。
-#   包里已含 libmpv + ffmpeg + libass + libplacebo + MoltenVK，链接设置由它自己声明，
-#   我们只要"声明依赖 + import Libmpv"，不需要自己编译 mpv，CI 上也没有额外下载步骤。
+# libmpv（播放内核，P6）：用 mpvkit/MPVKit 的**预编译 .xcframework**（LGPL 版），
+#   由 ios/scripts/fetch-mpvkit.sh 在 CI 里下载 + sha256 校验后解压到 ios/Frameworks/mpvkit/。
+#   为什么不用 SwiftPM：那 28 个二进制包并发下载会稳定报 "already exists in file system"，改确定性脚本。
+#   版本清单来自 MPVKit 的 Package.swift（LGPL 目标 _MPVKit + _FFmpeg），已钉死。
 
 name: Caty
 
@@ -22,11 +23,11 @@ options:
   createIntermediateGroups: true
   deploymentTarget:
     iOS: "17.0"
+  # 生成工程**之前**先把 libmpv 的预编译包拉下来（28 个 xcframework，带 sha256 校验）。
+  # 放在这里而不是 CI 的 step 里：.github/workflows 受令牌权限限制改不了，
+  # 而这一步是 xcodebuild 的前置条件，写在这里既确定又能跟着工程描述一起版本化。
+  preGenCommand: "bash scripts/fetch-mpvkit.sh"
 
-packages:
-  MPVKit:
-    url: https://github.com/mpvkit/MPVKit
-    exactVersion: 1.0.0
 
 settings:
   base:
@@ -64,7 +65,33 @@ targets:
     dependencies:
       - framework: Frameworks/NodeMobile.xcframework
         embed: true                            # 等价于 Xcode 里的 Embed & Sign
-      - package: MPVKit                        # libmpv 播放内核（见文件头说明）
-        product: MPVKit
+      - framework: Frameworks/mpvkit/Libmpv.xcframework
+      - framework: Frameworks/mpvkit/Libuchardet.xcframework
+      - framework: Frameworks/mpvkit/Libbluray.xcframework
+      - framework: Frameworks/mpvkit/Libavcodec.xcframework
+      - framework: Frameworks/mpvkit/Libavdevice.xcframework
+      - framework: Frameworks/mpvkit/Libavfilter.xcframework
+      - framework: Frameworks/mpvkit/Libavformat.xcframework
+      - framework: Frameworks/mpvkit/Libavutil.xcframework
+      - framework: Frameworks/mpvkit/Libswresample.xcframework
+      - framework: Frameworks/mpvkit/Libswscale.xcframework
+      - framework: Frameworks/mpvkit/Libssl.xcframework
+      - framework: Frameworks/mpvkit/Libcrypto.xcframework
+      - framework: Frameworks/mpvkit/Libass.xcframework
+      - framework: Frameworks/mpvkit/Libfreetype.xcframework
+      - framework: Frameworks/mpvkit/Libfribidi.xcframework
+      - framework: Frameworks/mpvkit/Libharfbuzz.xcframework
+      - framework: Frameworks/mpvkit/MoltenVK.xcframework
+      - framework: Frameworks/mpvkit/Libshaderc_combined.xcframework
+      - framework: Frameworks/mpvkit/lcms2.xcframework
+      - framework: Frameworks/mpvkit/Libplacebo.xcframework
+      - framework: Frameworks/mpvkit/Libdovi.xcframework
+      - framework: Frameworks/mpvkit/Libunibreak.xcframework
+      - framework: Frameworks/mpvkit/gmp.xcframework
+      - framework: Frameworks/mpvkit/nettle.xcframework
+      - framework: Frameworks/mpvkit/hogweed.xcframework
+      - framework: Frameworks/mpvkit/gnutls.xcframework
+      - framework: Frameworks/mpvkit/Libdav1d.xcframework
+      - framework: Frameworks/mpvkit/Libuavs3d.xcframework
     scheme:
       testTargets: []

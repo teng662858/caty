@@ -67,15 +67,15 @@ final class PlayerGestureState: ObservableObject {
                 dragOffset?.wrappedValue = 0
                 let delta = -Double(dy) / 260.0
                 if value.startLocation.x < viewWidth / 2 {
-                    self.brightness = min(1, max(0, brightness + CGFloat(delta)))
+                    self.brightness = min(1, max(0, self.brightness + CGFloat(delta)))
                     UIScreen.main.brightness = self.brightness
-                    self.hud = GestureHUD(kind: .brightness, value: Double(brightness),
-                                     text: "\(Int(brightness * 100))%")
+                    self.hud = GestureHUD(kind: .brightness, value: Double(self.brightness),
+                                          text: "\(Int(self.brightness * 100))%")
                 } else {
-                    self.volume = min(1, max(0, volume + Float(delta)))
+                    self.volume = min(1, max(0, self.volume + Float(delta)))
                     self.volumeSlider?.value = self.volume
-                    self.hud = GestureHUD(kind: .volume, value: Double(volume),
-                                     text: "\(Int(volume * 100))%")
+                    self.hud = GestureHUD(kind: .volume, value: Double(self.volume),
+                                          text: "\(Int(self.volume * 100))%")
                 }
             }
             .onEnded { value in
@@ -89,7 +89,7 @@ final class PlayerGestureState: ObservableObject {
                         dragOffset.wrappedValue = 0
                     }
                 }
-                clearHUDSoon()
+                self.clearHUDSoon()
             }
     }
 

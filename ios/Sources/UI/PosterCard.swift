@@ -19,46 +19,11 @@ struct PosterImage: View {
         Rectangle()
             .fill(Color.secondary.opacity(0.12))
             .aspectRatio(Theme.posterAspect, contentMode: .fit)
-            .overlay { content }
+            .overlay {
+                // 用自己写的加载器（带 Referer/UA + 内存缓存），AsyncImage 在图床防盗链面前会白图
+                RemoteImage(urlString: urlString, fallbackText: fallbackText)
+            }
             .clipped()
-    }
-
-    @ViewBuilder
-    private var content: some View {
-        if let urlString, let url = URL(string: urlString) {
-            AsyncImage(url: url, transaction: Transaction(animation: .easeIn(duration: 0.15))) { phase in
-                switch phase {
-                case .success(let image):
-                    image.resizable().scaledToFill()
-                case .failure:
-                    placeholder(systemName: "photo")
-                default:
-                    placeholder(systemName: "ellipsis")
-                }
-            }
-        } else {
-            placeholder(systemName: "film")
-        }
-    }
-
-    @ViewBuilder
-    private func placeholder(systemName: String) -> some View {
-        ZStack {
-            Color.secondary.opacity(0.12)
-            // 有片名就用"文字封面"（有些站点源里就没有封面图，比一个灰图标好看也好认）
-            if let text = fallbackText, !text.isEmpty {
-                Text(String(text.prefix(4)))
-                    .font(.system(size: 15, weight: .semibold))
-                    .multilineTextAlignment(.center)
-                    .lineLimit(2)
-                    .padding(6)
-                    .foregroundStyle(Theme.accent.opacity(0.85))
-            } else {
-                Image(systemName: systemName)
-                    .font(.title3)
-                    .foregroundStyle(.secondary)
-            }
-        }
     }
 }
 

@@ -192,6 +192,13 @@ struct HomeView: View {
                 loadingBanner
                 PosterSkeletonGrid(columns: library.settings.gridColumns)
             }
+        } else if isSearchOnlySite {
+            // 体检确认过：这些站点（"搜索|xxx"、部分"🏠"类）本来就不返回分类列表，
+            // 它们的工作方式是"去搜索页搜片名"——不该显示成"取不到内容"吓用户
+            StateView(kind: .empty("这是搜索型站点",
+                                   hint: "它没有分类列表，请到「搜索」页输入片名来用它")) {
+                Task { await loadSite() }
+            }
         } else if let errorText, items.isEmpty {
             StateView(kind: .failure("取不到内容", hint: "源返回：\(errorText)")) {
                 Task { await reload() }
@@ -205,6 +212,12 @@ struct HomeView: View {
                 grid
             }
         }
+    }
+
+    /// 搜索型站点：没有任何分类、但声明可搜索（"搜索|百度"这类）
+    private var isSearchOnlySite: Bool {
+        guard let site = currentSite else { return false }
+        return categories.isEmpty && items.isEmpty && errorText == nil && site.searchable
     }
 
     /// "正在载入某某站点…"（换源/换分类时的即时反馈）

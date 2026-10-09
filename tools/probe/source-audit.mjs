@@ -51,6 +51,8 @@ const LIMIT = Number(opt('limit', 0)) || Infinity
 const ONLY = opt('sites', '').split(',').map((s) => s.trim()).filter(Boolean)
 const REQUEST_TIMEOUT = Number(opt('timeout', 25000))
 const QUIET = has('quiet')
+/** --pic-check N：真的把封面抓一遍（有些站点"有地址但图加载不出来"，那是源/上游的事） */
+const PIC_CHECK = Number(opt('pic-check', 0))
 const UA = 'okhttp/3.15.0'
 
 // ------------------------------------------------------------------ 下载/缓存 bundle
@@ -167,6 +169,20 @@ if (!serviceBase) {
 }
 console.log(`▶ 源已就绪 ${serviceBase}\n`)
 
+async function callAbsolute(url) {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT)
+  try {
+    const response = await fetch(url, { headers: { 'User-Agent': UA, Referer: base }, signal: controller.signal })
+    const buffer = Buffer.from(await response.arrayBuffer())
+    return { status: response.status, bytes: buffer.length, text: 'binary ' + buffer.length + 'B ' + (response.headers.get('content-type') || '') }
+  } catch (error) {
+    return { status: -1, bytes: 0, text: error.name === 'AbortError' ? '超时' : error.message }
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 async function call(method, path, body) {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT)
@@ -232,6 +248,32 @@ async function auditSite(site) {
   const list = cat.json?.list || []
   row.items = list.length
   row.withPic = list.filter((x) => x.vod_pic && String(x.vod_pic).trim()).length
+
+  // 可选：真的抓几张封面（走源自己的 imageProxy），看是不是"有地址但加载不出来"
+  if (PIC_CHECK > 0 && list.length) {
+    row.pics = []
+    for (const item of list.slice(0, PIC_CHECK)) {
+      const pic = item.vod_pic ? String(item.vod_pic).trim() : ''
+      if (!pic) {
+        row.pics.push({ name: item.vod_name, status: 0, note: '无地址' })
+        continue
+      }
+      // 源自己的本地代理（/imageProxy…）走本地服务；外链图片直接抓
+      const picked = pic.startsWith(serviceBase)
+        ? await call('GET', pic.slice(serviceBase.length))
+        : await callAbsolute(pic)
+      row.pics.push({
+        name: item.vod_name,
+        status: picked.status,
+        bytes: picked.text ? picked.text.length : 0,
+        note: picked.status === 200 ? 'ok' : picked.text.slice(0, 40),
+      })
+    }
+    row.picFail = row.pics.filter((x) => x.status !== 200).length
+    if (row.picFail) {
+      row.message = (row.message ? row.message + '；' : '') + '封面 ' + row.picFail + '/' + row.pics.length + ' 张抓不到'
+    }
+  }
   if (cat.status !== 200) {
     row.message = row.message || (cat.json?.message ?? cat.text.slice(0, 120))
     row.verdict = '报错'
@@ -268,7 +310,7 @@ const broken = results.filter((r) => r.verdict === '报错' || r.verdict === '�
 
 console.log('\n=== 体检结果 ===')
 for (const row of results) {
-  const pic = row.items ? `${row.withPic}/${row.items} 有封面` : '-'
+  const pic = row.items ? (row.withPic + '/' + row.items + ' 有封面' + (row.picFail ? '（' + row.picFail + ' 张抓不到）' : '')) : '-'
   const up = row.upstream ? String(row.upstream).replace(/^https?:\/\//, '').slice(0, 28) : '-'
   console.log(`  ${row.verdict === '可用' ? '✓' : row.verdict === '空' ? '·' : '✗'} ${String(row.name).slice(0, 14).padEnd(16)} ${String(row.verdict).padEnd(4)} init=${String(row.init).padEnd(4)} home=${String(row.home).padEnd(4)} cat=${String(row.category).padEnd(4)} 条=${String(row.items).padEnd(4)} ${pic.padEnd(12)} 上游=${up}${row.message ? `  ${String(row.message).slice(0, 60)}` : ''}`)
 }

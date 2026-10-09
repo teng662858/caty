@@ -207,9 +207,11 @@ final class NodeRuntime: ObservableObject {
         NodeRuntime.redirectStdioToLog()
 
         let thread = Thread { [weak self] in
+            CatyLog.shared.info("runtime", "Node 线程已启动 → 调用 node_start（会一直阻塞到 Node 退出）")
             let code = withCArguments(arguments) { argc, argv in
                 node_start(argc, argv)
             }
+            CatyLog.shared.warn("runtime", "node_start 返回了，退出码 = \(code)")
             DispatchQueue.main.async { self?.nodeDidExit(code: code) }
         }
         thread.name = "caty.node"
@@ -278,7 +280,7 @@ final class NodeRuntime: ObservableObject {
             let elapsed = Int(Date().timeIntervalSince(started))
             CatyLog.shared.warn("runtime", "运行时准备中（已 \(elapsed)s）")
             if elapsed >= 90 {
-                self.fail("等待 serverStarted 超时（90s）。先看上面的日志：若连一行 Node 输出都没有，多半是 NodeMobile 没嵌进 App（见 docs/07 第 3 步）")
+                self.fail("等待 serverStarted 超时（90s）。看日志分辨：① 有 [stub] 输出但没有 serverStarted → Node 起了，是 /msg 回报没到宿主；② 一行 Node 输出都没有 → node_start 根本没跑起来")
             }
         }
     }

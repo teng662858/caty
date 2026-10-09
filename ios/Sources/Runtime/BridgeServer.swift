@@ -44,6 +44,10 @@ final class BridgeServer {
     private let queue = DispatchQueue(label: "caty.bridge")
     private var listener: NWListener?
     private var startCompletion: ((Result<UInt16, Error>) -> Void)?
+    /// 必须强引用存活的连接：否则 BridgeConnection 一建就被释放，
+    /// receive() 里 [weak self] 的回调全部落空，Node 的 /msg 汇报会被静默丢弃
+    /// （真机实测过：bridge 在监听、端口正常，但永远等不到 serverStarted）。
+    private var connections: [UUID: BridgeConnection] = [:]
 
     private(set) var port: UInt16 = 0
 
@@ -102,10 +106,23 @@ final class BridgeServer {
 
     private func accept(_ connection: NWConnection) {
         connection.start(queue: queue)
-        BridgeConnection(connection: connection, server: self).receive()
+        let id = UUID()
+        let bridge = BridgeConnection(id: id, connection: connection, server: self)
+        connections[id] = bridge
+        CatyLog.shared.debug("bridge", "新连接 \(id.uuidString.prefix(8))（当前 \(connections.count) 条）")
+        bridge.receive()
+    }
+
+    /// 连接结束或被释放时由 BridgeConnection 回调
+    fileprivate func release(_ id: UUID) {
+        connections.removeValue(forKey: id)
     }
 
     fileprivate func handle(_ request: BridgeRequest, respond: @escaping (Int, Data) -> Void) {
+        if request.pathOnly != "/health" {
+            CatyLog.shared.info("bridge", "收到 \(request.method) \(request.pathOnly)（\(request.body.count)B）")
+        }
+
         if request.method == "POST" && request.pathOnly == "/msg" {
             guard request.headers["x-catvod-token"] == token else {
                 CatyLog.shared.warn("bridge", "拒绝一个 token 不匹配的 /msg 请求")
@@ -162,13 +179,15 @@ final class BridgeServer {
 
 private final class BridgeConnection {
 
+    private let id: UUID
     private let connection: NWConnection
     private weak var server: BridgeServer?
     private var buffer = Data()
 
     private let maxBodyBytes = 1 << 20   // 1 MB，超出即断开
 
-    init(connection: NWConnection, server: BridgeServer) {
+    init(id: UUID, connection: NWConnection, server: BridgeServer) {
+        self.id = id
         self.connection = connection
         self.server = server
     }
@@ -261,6 +280,7 @@ private final class BridgeConnection {
     }
 
     private func close() {
+        server?.release(id)
         connection.cancel()
     }
 }

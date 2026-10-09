@@ -236,13 +236,6 @@ final class NodeRuntime: ObservableObject {
         setenv("DEV_HTTP_PORT", "0", 1)
         setenv("HOME", sources[0].dataRoot.path, 1)
 
-        // 容器型源（catpaw/douer/smdl/XPTV 这一家）里的「直」/「盘」站点要靠外部 JS 脚本，
-        // 这一支用 CATPAW_CUSTOM_SPIDER_DIR 指定脚本目录（另一支看 $NODE_PATH/js 或
-        // ~/Library/Application Support/CatPaw/js，ScriptStore 会往这几处都写一份）。
-        if let spiders = try? ScriptStore.shared.sharedDir() {
-            setenv("CATPAW_CUSTOM_SPIDER_DIR", spiders.path, 1)
-            CatyLog.shared.info("runtime", "脚本目录（站点脚本）：(spiders.path)")
-        }
 
         // ---- /msg 桥
         let token = NodeRuntime.randomToken()

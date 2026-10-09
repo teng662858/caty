@@ -37,8 +37,12 @@ struct FullscreenPlayerView: View {
     @State private var controlsVisible = true
     @State private var scrubbing = false
     @State private var hideTask: Task<Void, Never>?
-    /// 手势（亮度/音量/快进/长按倍速）——和小窗共用一套逻辑
-    @StateObject private var gestures = PlayerGestureState()
+    /// 手势状态（本地一份，和小窗各自独立）
+    @State private var hud: GestureHUD?
+    @State private var volume: Float = 0.5
+    @State private var brightness: CGFloat = UIScreen.main.brightness
+    @State private var volumeSlider: UISlider?
+    @State private var hideHUDTask: Task<Void, Never>?
     /// 竖屏视频（短剧）：不强行横屏，否则画面只占中间一小条
     @State private var forcedLandscape = false
 
@@ -56,11 +60,16 @@ struct FullscreenPlayerView: View {
             .ignoresSafeArea()
             .contentShape(Rectangle())
             .onTapGesture { toggleControls() }
-            .gesture(gestures.dragGesture(controller: controller,
-                                          viewWidth: UIScreen.main.bounds.width))
+            .gesture(videoDragGesture)
             .onLongPressGesture(minimumDuration: 0.5) {
             } onPressingChanged: { pressing in
-                gestures.pressingChanged(pressing, controller: controller, normalRate: rate)
+                if pressing {
+                    controller.setRate(2.0)
+                    hud = GestureHUD(kind: .rate, value: 2.0, text: "2 倍速播放中")
+                } else {
+                    controller.setRate(rate)
+                    clearHUDSoon()
+                }
             }
 
             if danmakuEnabled, let comments = danmakuStore.current {
@@ -77,7 +86,7 @@ struct FullscreenPlayerView: View {
                     .ignoresSafeArea()
             }
 
-            if let hud = gestures.hud {
+            if let hud {
                 GestureHUDView(hud: hud)
             }
 
@@ -89,7 +98,7 @@ struct FullscreenPlayerView: View {
         .statusBarHidden()
         .persistentSystemOverlays(.hidden)
         .onAppear {
-            gestures.prepare()
+            prepareVolumeSlider()
             applyOrientation()
             scheduleHide()
         }
@@ -257,6 +266,57 @@ struct FullscreenPlayerView: View {
     }
 
     // MARK: - 逻辑
+
+    /// 全屏里的手势：左半边上下=亮度、右半边上下=音量、横向=快进、长按=2 倍速
+    private var videoDragGesture: some Gesture {
+        DragGesture(minimumDistance: 16)
+            .onChanged { value in
+                let dx = value.translation.width
+                let dy = value.translation.height
+                if abs(dx) > abs(dy) {
+                    let seconds = Double(dx) / 6.0
+                    let current = controller.position
+                    let total = controller.duration
+                    let target = max(0, min(total > 0 ? total - 1 : current + seconds, current + seconds))
+                    controller.seek(to: target)
+                    hud = GestureHUD(kind: .seek, value: seconds,
+                                     text: (seconds >= 0 ? "+" : "") + String(Int(seconds)) + " 秒")
+                    return
+                }
+                let delta = -Double(dy) / 260.0
+                if value.startLocation.x < UIScreen.main.bounds.width / 2 {
+                    brightness = min(1, max(0, brightness + CGFloat(delta)))
+                    UIScreen.main.brightness = brightness
+                    hud = GestureHUD(kind: .brightness, value: Double(brightness),
+                                     text: String(Int(brightness * 100)) + "%")
+                } else {
+                    volume = min(1, max(0, volume + Float(delta)))
+                    volumeSlider?.value = volume
+                    hud = GestureHUD(kind: .volume, value: Double(volume),
+                                     text: String(Int(volume * 100)) + "%")
+                }
+            }
+            .onEnded { _ in
+                clearHUDSoon()
+            }
+    }
+
+    private func prepareVolumeSlider() {
+        let volumeView = MPVolumeView(frame: .zero)
+        volumeSlider = volumeView.subviews.compactMap { $0 as? UISlider }.first
+        volume = volumeSlider?.value ?? AVAudioSession.sharedInstance().outputVolume
+        brightness = UIScreen.main.brightness
+    }
+
+    private func clearHUDSoon() {
+        guard hud != nil else { return }
+        hideHUDTask?.cancel()
+        hideHUDTask = Task {
+            try? await Task.sleep(nanoseconds: 800_000_000)
+            guard !Task.isCancelled else { return }
+            hud = nil
+        }
+    }
 
     private func close() {
         onClose()

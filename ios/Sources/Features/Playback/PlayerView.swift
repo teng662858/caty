@@ -32,8 +32,12 @@ struct PlayerView: View {
     @State private var dragX: CGFloat = 0
     /// 全屏（横屏）播放
     @State private var showFullscreen = false
-    /// 手势（亮度/音量/快进/长按倍速 + HUD）——与小窗/全屏共用
-    @StateObject private var gestures = PlayerGestureState()
+    /// 手势 HUD（亮度/音量/快进提示）
+    @State private var hud: GestureHUD?
+    @State private var volume: Float = 0.5
+    @State private var brightness: CGFloat = UIScreen.main.brightness
+    @State private var volumeSlider: UISlider?
+    @State private var hideHUDTask: Task<Void, Never>?
     @State private var longPressRate = false
     /// 弹幕（P6）：从源里取这一集的弹幕，Canvas 画在画面上
     /// 弹幕用共享的 DanmakuStore：小窗、全屏、源推送都写同一份
@@ -105,7 +109,7 @@ struct PlayerView: View {
         .onAppear {
             controller.update(preference: PlayerKernelPreference.from(library.settings.playerKernel), rate: rate)
             controller.onEnded = { playNext(auto: true) }
-            gestures.prepare()
+            prepareVolumeSlider()
         }
         .onChange(of: library.settings.playerKernel) { _, newValue in
             controller.update(preference: PlayerKernelPreference.from(newValue), rate: rate)
@@ -148,6 +152,77 @@ struct PlayerView: View {
             }
     }
 
+    /// 画面上的拖拽：先判方向 —— 竖直向下=关闭播放页；其余交给亮度/音量/快进
+    private var videoDragGesture: some Gesture {
+        DragGesture(minimumDistance: 16)
+            .onChanged { value in
+                let dx = value.translation.width
+                let dy = value.translation.height
+                if abs(dx) > abs(dy) {
+                    dragY = 0
+                    let seconds = Double(dx) / 6.0
+                    let current = controller.position
+                    let total = controller.duration
+                    let target = max(0, min(total > 0 ? total - 1 : current + seconds, current + seconds))
+                    controller.seek(to: target)
+                    hud = GestureHUD(kind: .seek, value: seconds,
+                                     text: (seconds >= 0 ? "+" : "") + String(Int(seconds)) + " 秒")
+                    return
+                }
+                if dy > 0, abs(dy) > abs(dx) * 1.2 {
+                    dragY = dy
+                    hud = nil
+                    return
+                }
+                dragY = 0
+                let delta = -Double(dy) / 260.0
+                if value.startLocation.x < UIScreen.main.bounds.width / 2 {
+                    brightness = min(1, max(0, brightness + CGFloat(delta)))
+                    UIScreen.main.brightness = brightness
+                    hud = GestureHUD(kind: .brightness, value: Double(brightness),
+                                     text: String(Int(brightness * 100)) + "%")
+                } else {
+                    volume = min(1, max(0, volume + Float(delta)))
+                    volumeSlider?.value = volume
+                    hud = GestureHUD(kind: .volume, value: Double(volume),
+                                     text: String(Int(volume * 100)) + "%")
+                }
+            }
+            .onEnded { value in
+                if value.translation.height > 110 || value.predictedEndTranslation.height > 240 {
+                    hud = nil
+                    close()
+                    return
+                }
+                withAnimation(.spring(response: 0.28, dampingFraction: 0.9)) { dragY = 0 }
+                clearHUDSoon()
+            }
+    }
+
+    /// iOS 没有公开的"设置系统音量"API，业界做法是拿 MPVolumeView 里那个 UISlider 来用
+    private func prepareVolumeSlider() {
+        let volumeView = MPVolumeView(frame: .zero)
+        volumeSlider = volumeView.subviews.compactMap { $0 as? UISlider }.first
+        volume = volumeSlider?.value ?? AVAudioSession.sharedInstance().outputVolume
+        brightness = UIScreen.main.brightness
+    }
+
+    private func showSeekHUD(seconds: Double) {
+        hud = GestureHUD(kind: .seek, value: seconds,
+                         text: (seconds >= 0 ? "+" : "") + String(Int(seconds)) + " 秒")
+        clearHUDSoon()
+    }
+
+    private func clearHUDSoon() {
+        guard hud != nil else { return }
+        hideHUDTask?.cancel()
+        hideHUDTask = Task {
+            try? await Task.sleep(nanoseconds: 800_000_000)
+            guard !Task.isCancelled else { return }
+            hud = nil
+        }
+    }
+
     // MARK: - 视频区
 
     private var videoArea: some View {
@@ -185,7 +260,7 @@ struct PlayerView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             }
 
-            if let hud = gestures.hud {
+            if let hud {
                 GestureHUDView(hud: hud)
             }
             if controller.buffering {
@@ -200,15 +275,20 @@ struct PlayerView: View {
         .frame(maxWidth: .infinity)
         .frame(maxHeight: controller.isPortraitVideo ? 420 : nil)
         .contentShape(Rectangle())
-        .gesture(gestures.dragGesture(controller: controller,
-                                      viewWidth: UIScreen.main.bounds.width,
-                                      onClose: { close() },
-                                      dragOffset: $dragY))
+        .gesture(videoDragGesture)
         .onLongPressGesture(minimumDuration: 0.5) {
             // 长按临时 2 倍速（松手恢复）
         } onPressingChanged: { pressing in
             guard controller.videoAspectReady else { return }
-            gestures.pressingChanged(pressing, controller: controller, normalRate: rate)
+            if pressing, !longPressRate {
+                longPressRate = true
+                controller.setRate(2.0)
+                hud = GestureHUD(kind: .rate, value: 2.0, text: "2 倍速播放中")
+            } else if !pressing, longPressRate {
+                longPressRate = false
+                controller.setRate(rate)
+                clearHUDSoon()
+            }
         }
         .overlay(alignment: .bottomTrailing) {
             if !showFullscreen, controller.videoAspectReady {
@@ -430,7 +510,7 @@ struct PlayerView: View {
         let total = controller.duration
         let target = max(0, min(total > 0 ? total - 1 : current + seconds, current + seconds))
         controller.seek(to: target)
-        gestures.show(seconds: seconds)
+        showSeekHUD(seconds: seconds)
     }
 
     @MainActor

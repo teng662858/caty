@@ -56,6 +56,17 @@ struct SettingsView: View {
                     Text(option.label).tag(option)
                 }
             }
+            Picker("跳过片头", selection: Binding(
+                get: { library.settings.skipIntroSeconds },
+                set: { library.settings.skipIntroSeconds = $0 }
+            )) {
+                Text("不显示").tag(0)
+                Text("30 秒").tag(30)
+                Text("60 秒").tag(60)
+                Text("90 秒").tag(90)
+                Text("120 秒").tag(120)
+            }
+
             Text(PlayerKernelPreference.from(library.settings.playerKernel).detail)
                 .font(.footnote)
                 .foregroundStyle(.secondary)

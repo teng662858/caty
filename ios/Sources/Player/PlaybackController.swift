@@ -57,6 +57,10 @@ final class PlaybackController: ObservableObject {
     private(set) var positionUpdatedAt = Date()
     /// 画面的宽高比（宽/高）。竖屏短剧 ≈ 0.56，横屏 ≈ 1.78；拿不到就 nil 走 16:9
     @Published private(set) var videoAspect: Double?
+    /// 画面比例（自适应 / 铺满 / 16:9 / 4:3）——控制层"比例"按钮循环
+    @Published private(set) var aspectMode: PlayerAspectMode = .fit
+    /// 画中画（只有系统内核能开；mpv 渲染到自己的图层里，不支持）
+    let pip = PiPHandle()
     @Published private(set) var errorText: String?
     /// 状态提示（例如"系统内核播不了，已自动切 mpv"）
     @Published private(set) var kernelNote: String?
@@ -255,6 +259,90 @@ final class PlaybackController: ObservableObject {
 
     /// 竖屏画面（短剧/直播竖屏）——进全屏时不能硬转横屏
     var isPortraitVideo: Bool { (videoAspect ?? 1.78) < 1.05 }
+
+    // MARK: - 画面比例 / 截图
+
+    /// 循环切换画面比例（系统内核改 AVPlayerLayer 的 videoGravity；mpv 改 video-aspect-override/panscan）
+    func cycleAspect() {
+        let next = aspectMode.next
+        aspectMode = next
+        applyAspect(next)
+    }
+
+    private func applyAspect(_ mode: PlayerAspectMode) {
+        if active == .mpv {
+            if let fixed = mode.fixedAspect {
+                mpv.setVideoAspect(String(format: "%.4f", fixed))
+            } else {
+                mpv.setVideoAspect("no")
+            }
+            mpv.setPanscan(mode.fills ? 1.0 : 0.0)
+        }
+        // 系统内核：PlayerHostView 会读到 aspectMode 后设置 videoGravity
+    }
+
+    /// 截图：mpv 内核可以真截图；系统内核借 AVPlayerLayer 的画中画图层截不了，明确告诉用户
+    func screenshot() async -> String {
+        switch active {
+        case .mpv:
+            if let path = await mpv.screenshot() {
+                let saved = await PlayerScreenshot.saveToPhotos(path: path)
+                return saved ? "已保存到相册" : "已截图（保存相册失败，已存在临时目录）"
+            }
+            return "截图失败（mpv 还没画出画面）"
+        case .system:
+            return "系统内核暂不支持截图：设置里切到 mpv 内核再试"
+        }
+    }
+
+    // MARK: - 信息行（控制层显示：分辨率 / 帧率 / 速度）
+
+    var videoSizeText: String? {
+        switch active {
+        case .system:
+            let size = av.player.currentItem?.presentationSize ?? .zero
+            guard size.width > 1, size.height > 1 else { return nil }
+            return String(Int(size.width)) + "x" + String(Int(size.height))
+        case .mpv:
+            let width = mpv.videoWidth
+            let height = mpv.videoHeight
+            guard width > 1, height > 1 else { return nil }
+            return String(width) + "x" + String(height)
+        }
+    }
+
+    var frameRateText: String? {
+        switch active {
+        case .system:
+            guard let track = av.player.currentItem?.tracks.first(where: { $0.assetTrack?.mediaType == .video }) else { return nil }
+            let fps = track.currentVideoFrameRate
+            guard fps > 0, fps.isFinite else { return nil }
+            return String(Int(fps.rounded())) + "fps"
+        case .mpv:
+            let fps = mpv.containerFps
+            guard fps > 0, fps.isFinite else { return nil }
+            return String(Int(fps.rounded())) + "fps"
+        }
+    }
+
+    var speedText: String? {
+        switch active {
+        case .system:
+            guard let event = av.player.currentItem?.accessLog()?.events.last, event.observedBitrate > 0 else { return nil }
+            let bytesPerSecond = Double(event.observedBitrate) / 8.0
+            return Self.speedLabel(bytesPerSecond)
+        case .mpv:
+            guard let speed = mpv.cacheSpeed, speed > 0 else { return nil }
+            return Self.speedLabel(speed)
+        }
+    }
+
+    private static func speedLabel(_ bytesPerSecond: Double) -> String {
+        if bytesPerSecond >= 1024 * 1024 {
+            return String(format: "%.1f MB/s", bytesPerSecond / 1024 / 1024)
+        }
+        return String(format: "%.0f KB/s", bytesPerSecond / 1024)
+    }
 
     private func handleEnded() {
         onEnded?()

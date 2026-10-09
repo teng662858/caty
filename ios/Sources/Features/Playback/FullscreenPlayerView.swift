@@ -1,22 +1,22 @@
 //
 //  FullscreenPlayerView.swift
-//  全屏播放（2026-10-10 用户："播放页没什么功能，全屏播放都没有"）
+//  全屏播放（P6+ 重写）：横屏铺满 + 我们自己的控制层（和小窗共用 PlayerControlsOverlay）
 //
-//  做法：
-//   · 用 fullScreenCover 弹出，进来时把界面切成**横屏**，退出时切回竖屏
-//     （平时 App 锁竖屏，见 ScreenOrientation / CatyAppDelegate）
-//   · 视频铺满整屏，点一下显示/隐藏控制层（4 秒无操作自动隐藏）
-//   · 控制层：进度条（可拖）/ 时间 / 播放暂停 / ±15 秒 / 倍速 / 选集 / 退出全屏
-//   · 复用同一个 AVPlayerEngine —— 原来那个（非全屏的）播放器在弹出期间会被替换成黑底，
-//     保证同一时刻只有一个 VideoPlayer，不会出现两个画面抢渲染
+//  这次重写的起点：之前把太多东西塞进一个表达式，swift-frontend 在 CI 上直接崩了。
+//  现在拆成 —— 画面层 / 弹幕层 / 控制层 / 手势 四块，每块都很小。
+//
+//  方向策略：进全屏时按**视频自己的宽高比**决定方向（竖屏短剧不硬转横屏），顶栏"旋转"可手动切。
 //
 
 import SwiftUI
 import AVKit
+import MediaPlayer
 
 struct FullscreenPlayerView: View {
 
     @ObservedObject var controller: PlaybackController
+    @ObservedObject private var library = LibraryStore.shared
+
     let episodes: [Episode]
     let currentIndex: Int
     let rate: Double
@@ -24,166 +24,230 @@ struct FullscreenPlayerView: View {
     let onSelectEpisode: (Int) -> Void
     let onRate: (Double) -> Void
     let onClose: () -> Void
+    let onPrev: () -> Void
+    let canGoPrev: Bool
+    let onNext: () -> Void
+    let canGoNext: Bool
+    let danmakuEnabled: Bool
+    let onToggleDanmaku: () -> Void
 
+    @State private var danmaku: [DanmakuComment] = []
+    @State private var hud: GestureHUD?
+    @State private var volume: Float = 0.5
+    @State private var brightness: CGFloat = UIScreen.main.brightness
+    @State private var volumeSlider: UISlider?
+    @State private var hideHUDTask: Task<Void, Never>?
     @State private var controlsVisible = true
-    @State private var scrubbing = false
-    @State private var hideTask: Task<Void, Never>?
+    @State private var hideControlsTask: Task<Void, Never>?
+    @State private var forcedLandscape = false
+    @State private var locked = false
+    @State private var toast: String?
 
     var body: some View {
         ZStack {
             Color.black.ignoresSafeArea()
-
-            Group {
-                if controller.active == .system {
-                    VideoPlayer(player: controller.av.player)
-                } else {
-                    MPVVideoView(engine: controller.mpv)
-                }
-            }
-            .ignoresSafeArea()
-            .onTapGesture { toggleControls() }
-
-            if controlsVisible {
-                controls
-                    .transition(.opacity)
-            }
+            videoLayer
+            danmakuLayer
+            if let hud { GestureHUDView(hud: hud) }
+            if let toast { toastView(toast) }
+            if controlsVisible { controls }
         }
         .statusBarHidden()
         .persistentSystemOverlays(.hidden)
-        .onAppear {
-            ScreenOrientation.lockLandscape()
-            scheduleHide()
+        .onAppear(perform: onAppearAction)
+        .onDisappear(perform: onDisappearAction)
+        .onReceive(DanmakuStore.shared.$comments) { list in
+            danmaku = list
         }
-        .onDisappear {
-            hideTask?.cancel()
-            ScreenOrientation.lockPortrait()
+    }
+
+    // MARK: - 画面
+
+    private var videoLayer: some View {
+        Group {
+            if controller.active == .system {
+                PlayerHostView(player: controller.av.player,
+                               fill: controller.aspectMode.fills,
+                               pip: controller.pip)
+            } else {
+                MPVVideoView(engine: controller.mpv)
+            }
+        }
+        .ignoresSafeArea()
+        .contentShape(Rectangle())
+        .onTapGesture { toggleControls() }
+        .gesture(videoDragGesture)
+        .onLongPressGesture(minimumDuration: 0.5) {
+            guard !locked, controller.videoAspectReady else { return }
+            controller.setRate(2.0)
+            hud = GestureHUD(kind: .rate, value: 2.0, text: "2 倍速播放中")
+        } onPressingChanged: { pressing in
+            guard !pressing, !locked else { return }
+            controller.setRate(rate)
+            clearHUDSoon()
+        }
+    }
+
+    // MARK: - 弹幕
+
+    @ViewBuilder
+    private var danmakuLayer: some View {
+        if danmakuEnabled, !danmaku.isEmpty {
+            DanmakuOverlay(comments: danmaku,
+                           position: { extrapolatedPosition },
+                           isPlaying: { controller.isPlaying },
+                           fontSize: CGFloat(library.settings.danmakuFontSize),
+                           opacity: library.settings.danmakuOpacity,
+                           laneSpacing: CGFloat(library.settings.danmakuLaneSpacing),
+                           showTop: library.settings.danmakuShowTop,
+                           showBottom: library.settings.danmakuShowBottom,
+                           blockWords: library.settings.danmakuBlockWords
+                               .split(separator: ",").map(String.init))
+                .ignoresSafeArea()
         }
     }
 
     // MARK: - 控制层
 
     private var controls: some View {
-        VStack {
-            topBar
-            Spacer()
-            bottomBar
-        }
-        .padding(Theme.padding)
+        PlayerControlsOverlay(state: chromeState, actions: chromeActions)
+            .transition(.opacity)
     }
 
-    private var topBar: some View {
-        HStack(spacing: Theme.spacingM) {
-            Button {
-                close()
-            } label: {
-                Label("退出全屏", systemImage: "arrow.down.right.and.arrow.up.left")
-                    .font(.subheadline)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .background(.ultraThinMaterial, in: Capsule())
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(.white)
-
-            Text(controller.currentTitle ?? "")
-                .font(.subheadline)
-                .foregroundStyle(.white)
-                .lineLimit(1)
-
-            Spacer()
-
-            if episodes.count > 1 {
-                Menu {
-                    ForEach(Array(episodes.enumerated()), id: \.element.id) { i, ep in
-                        Button {
-                            onSelectEpisode(i)
-                            interactive()
-                        } label: {
-                            if i == currentIndex {
-                                Label(ep.name, systemImage: "checkmark")
-                            } else {
-                                Text(ep.name)
-                            }
-                        }
-                    }
-                } label: {
-                    Label("选集", systemImage: "list.bullet")
-                        .font(.subheadline)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 8)
-                        .background(.ultraThinMaterial, in: Capsule())
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(.white)
-            }
-        }
-        .padding(.top, 6)
+    private var chromeState: PlayerChromeState {
+        var state = PlayerChromeState()
+        state.isFullscreen = true
+        state.title = controller.currentTitle ?? ""
+        state.subtitle = subtitleText
+        state.position = controller.position
+        state.duration = controller.duration
+        state.isLive = isLive
+        state.isPlaying = controller.isPlaying
+        state.rate = rate
+        state.danmakuEnabled = danmakuEnabled
+        state.danmakuCount = danmaku.count
+        state.infoLine = infoLine
+        state.aspectLabel = controller.aspectMode.label
+        state.introSeconds = library.settings.skipIntroSeconds
+        state.locked = locked
+        return state
     }
 
-    private var bottomBar: some View {
-        VStack(spacing: Theme.spacingS) {
-            if isLive {
-                HStack(spacing: 6) {
-                    Circle().fill(.red).frame(width: 8, height: 8)
-                    Text("直播中").font(.caption).foregroundStyle(.white)
-                    Spacer()
-                }
-            } else {
-                HStack(spacing: 10) {
-                    Text(Self.timeText(controller.position)).font(.caption2).monospacedDigit()
-                    Slider(value: Binding(get: { controller.position },
-                                          set: {
-                                              scrubbing = true
-                                              controller.seek(to: $0)
-                                          }), in: 0...max(1, controller.duration))
-                    .tint(.white)
-                    Text(Self.timeText(controller.duration)).font(.caption2).monospacedDigit()
-                }
-            }
-
-            HStack(spacing: Theme.spacingL) {
-                Button { step(-15) } label: {
-                    Image(systemName: "gobackward.15").font(.title2).frame(width: 44, height: 44)
-                }
-                Button { controller.toggle(); interactive() } label: {
-                    Image(systemName: controller.isPlaying ? "pause.fill" : "play.fill")
-                        .font(.largeTitle)
-                        .frame(width: 60, height: 44)
-                }
-                Button { step(15) } label: {
-                    Image(systemName: "goforward.15").font(.title2).frame(width: 44, height: 44)
-                }
-
-                Spacer()
-
-                Menu {
-                    ForEach([0.5, 0.75, 1.0, 1.25, 1.5, 2.0], id: \.self) { value in
-                        Button {
-                            onRate(value)
-                            interactive()
-                        } label: {
-                            Text(value == 1.0 ? "正常速度" : String(format: "%g 倍", value))
-                        }
-                    }
-                } label: {
-                    Text(rate == 1.0 ? "倍速" : String(format: "%gx", rate))
-                        .font(.subheadline)
-                        .frame(height: 44)
-                        .padding(.horizontal, 10)
-                        .background(.ultraThinMaterial, in: Capsule())
-                }
-                .buttonStyle(.plain)
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(.white)
+    private var chromeActions: PlayerChromeActions {
+        var actions = PlayerChromeActions()
+        actions.close = onClose
+        actions.togglePlay = { controller.toggle(); interactive() }
+        actions.seek = { controller.seek(to: $0); interactive() }
+        actions.seekBy = { step($0) }
+        actions.previousEpisode = onPrev
+        actions.nextEpisode = onNext
+        actions.setRate = { onRate($0); interactive() }
+        actions.toggleDanmaku = { onToggleDanmaku(); interactive() }
+        actions.selectEpisode = { selectEpisode(); interactive() }
+        actions.rotate = { rotate() }
+        actions.cycleAspect = { controller.cycleAspect(); showToast("画面比例：" + controller.aspectMode.label) }
+        actions.pictureInPicture = { startPiP() }
+        actions.screenshot = { takeScreenshot() }
+        actions.skipIntro = { skipIntro() }
+        actions.setLocked = { value in
+            locked = value
+            if value { showToast("已锁定：点左侧锁头解锁") }
         }
-        .padding(.bottom, 10)
+        return actions
     }
 
-    // MARK: - 逻辑
+    private var subtitleText: String {
+        guard currentIndex >= 0, currentIndex < episodes.count else { return "" }
+        return "第 " + String(currentIndex + 1) + " 集 · " + episodes[currentIndex].name
+    }
 
-    private func close() {
-        onClose()
+    /// 信息行：分辨率 · 帧率 · 下载速度（拿得到才显示）
+    private var infoLine: String {
+        var parts: [String] = []
+        if let size = controller.videoSizeText { parts.append(size) }
+        if let fps = controller.frameRateText { parts.append(fps) }
+        if let speed = controller.speedText { parts.append(speed) }
+        return parts.joined(separator: "  ")
+    }
+
+    // MARK: - 手势
+
+    private var videoDragGesture: some Gesture {
+        DragGesture(minimumDistance: 16)
+            .onChanged { value in
+                guard !locked else { return }
+                let dx = value.translation.width
+                let dy = value.translation.height
+                if abs(dx) > abs(dy) {
+                    let seconds = Double(dx) / 6.0
+                    let current = controller.position
+                    let total = controller.duration
+                    let target = max(0, min(total > 0 ? total - 1 : current + seconds, current + seconds))
+                    controller.seek(to: target)
+                    hud = GestureHUD(kind: .seek, value: seconds, text: seekText(seconds))
+                    return
+                }
+                let delta = -Double(dy) / 260.0
+                if value.startLocation.x < UIScreen.main.bounds.width / 2 {
+                    brightness = clampUnit(brightness + CGFloat(delta))
+                    UIScreen.main.brightness = brightness
+                    hud = GestureHUD(kind: .brightness, value: Double(brightness), text: percentText(brightness))
+                } else {
+                    volume = clampVolume(volume + Float(delta))
+                    volumeSlider?.value = volume
+                    hud = GestureHUD(kind: .volume, value: Double(volume), text: percentText(CGFloat(volume)))
+                }
+            }
+            .onEnded { _ in
+                clearHUDSoon()
+            }
+    }
+
+    // MARK: - 动作
+
+    private func onAppearAction() {
+        prepareVolumeSlider()
+        applyOrientation()
+        scheduleHideControls()
+    }
+
+    private func onDisappearAction() {
+        hideControlsTask?.cancel()
+        ScreenOrientation.lockPortrait()
+    }
+
+    private func applyOrientation() {
+        if forcedLandscape {
+            ScreenOrientation.lockLandscape()
+            return
+        }
+        if controller.isPortraitVideo {
+            ScreenOrientation.lockPortrait()
+        } else {
+            ScreenOrientation.lockLandscape()
+        }
+    }
+
+    private func rotate() {
+        forcedLandscape.toggle()
+        applyOrientation()
+        showToast(forcedLandscape ? "横屏" : "竖屏")
+    }
+
+    private func selectEpisode() {
+        guard !episodes.isEmpty else { return }
+        let sheet = UIAlertController(title: "选集", message: nil, preferredStyle: .actionSheet)
+        for (i, episode) in episodes.enumerated() {
+            let title = i == currentIndex ? "✓ " + episode.name : episode.name
+            sheet.addAction(UIAlertAction(title: title, style: .default) { _ in
+                onSelectEpisode(i)
+            })
+        }
+        sheet.addAction(UIAlertAction(title: "取消", style: .cancel))
+        if let popover = sheet.popoverPresentationController {
+            popover.sourceView = UIApplication.shared.windows.first
+        }
+        UIApplication.shared.catyTopViewController()?.present(sheet, animated: true)
     }
 
     private func step(_ seconds: Double) {
@@ -191,35 +255,134 @@ struct FullscreenPlayerView: View {
         let current = controller.position
         let target = max(0, min(total > 0 ? total - 1 : current + seconds, current + seconds))
         controller.seek(to: target)
+        hud = GestureHUD(kind: .seek, value: seconds, text: seekText(seconds))
         interactive()
     }
 
+    private func skipIntro() {
+        let seconds = max(1, library.settings.skipIntroSeconds)
+        let base = controller.position
+        let limit = controller.duration > 0 ? controller.duration - 1 : base + Double(seconds)
+        controller.seek(to: min(limit, base + Double(seconds)))
+        showToast("已跳片头 " + String(seconds) + " 秒")
+    }
+
+    private func startPiP() {
+        guard controller.active == .system else {
+            showToast("画中画只支持系统内核（设置里可切）")
+            return
+        }
+        controller.pip.start()
+    }
+
+    private func takeScreenshot() {
+        Task {
+            let message = await controller.screenshot()
+            showToast(message)
+        }
+    }
+
+    // MARK: - 控制层显隐 / 提示
+
     private func toggleControls() {
         withAnimation(.easeInOut(duration: 0.2)) { controlsVisible.toggle() }
-        if controlsVisible { scheduleHide() } else { hideTask?.cancel() }
+        if controlsVisible { scheduleHideControls() } else { hideControlsTask?.cancel() }
     }
 
-    /// 用户主动操作过 → 重新计时自动隐藏
     private func interactive() {
-        scheduleHide()
+        scheduleHideControls()
     }
 
-    private func scheduleHide() {
-        hideTask?.cancel()
-        hideTask = Task {
+    private func scheduleHideControls() {
+        hideControlsTask?.cancel()
+        hideControlsTask = Task {
             try? await Task.sleep(nanoseconds: 4_500_000_000)
             guard !Task.isCancelled else { return }
             withAnimation(.easeInOut(duration: 0.25)) { controlsVisible = false }
         }
     }
 
-    private static func timeText(_ seconds: Double) -> String {
-        guard seconds.isFinite, seconds >= 0 else { return "--:--" }
-        let total = Int(seconds)
-        let h = total / 3600
-        let m = (total % 3600) / 60
-        let s = total % 60
-        if h > 0 { return String(format: "%d:%02d:%02d", h, m, s) }
-        return String(format: "%02d:%02d", m, s)
+    private func showToast(_ text: String) {
+        toast = text
+        Task {
+            try? await Task.sleep(nanoseconds: 1_600_000_000)
+            if toast == text { toast = nil }
+        }
+    }
+
+    private func toastView(_ text: String) -> some View {
+        VStack {
+            Spacer()
+            Text(text)
+                .font(.footnote)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .background(.black.opacity(0.6), in: Capsule())
+                .foregroundStyle(.white)
+                .padding(.bottom, 120)
+            Spacer()
+        }
+    }
+
+    // MARK: - 小工具
+
+    private var extrapolatedPosition: Double {
+        guard controller.isPlaying else { return controller.position }
+        return controller.position + Date().timeIntervalSince(controller.positionUpdatedAt) * rate
+    }
+
+    private func prepareVolumeSlider() {
+        let volumeView = MPVolumeView(frame: .zero)
+        volumeSlider = volumeView.subviews.compactMap { $0 as? UISlider }.first
+        volume = volumeSlider?.value ?? AVAudioSession.sharedInstance().outputVolume
+        brightness = UIScreen.main.brightness
+    }
+
+    private func clearHUDSoon() {
+        guard hud != nil else { return }
+        hideHUDTask?.cancel()
+        hideHUDTask = Task {
+            try? await Task.sleep(nanoseconds: 800_000_000)
+            guard !Task.isCancelled else { return }
+            hud = nil
+        }
+    }
+
+    private func seekText(_ seconds: Double) -> String {
+        let sign = seconds >= 0 ? "+" : ""
+        return sign + String(Int(seconds)) + " 秒"
+    }
+
+    private func percentText(_ value: CGFloat) -> String {
+        String(Int(value * 100)) + "%"
+    }
+
+    private func clampUnit(_ value: CGFloat) -> CGFloat {
+        min(1, max(0, value))
+    }
+
+    private func clampVolume(_ value: Float) -> Float {
+        min(1, max(0, value))
+    }
+}
+
+extension UIApplication {
+
+    /// 找最上层控制器（弹系统的"选集"菜单要用）
+    func catyTopViewController(base: UIViewController? = nil) -> UIViewController? {
+        let root = base ?? connectedScenes
+            .compactMap { ($0 as? UIWindowScene)?.keyWindow }
+            .first?
+            .rootViewController
+        if let presented = root?.presentedViewController {
+            return catyTopViewController(base: presented)
+        }
+        if let navigation = root as? UINavigationController {
+            return catyTopViewController(base: navigation.visibleViewController)
+        }
+        if let tab = root as? UITabBarController {
+            return catyTopViewController(base: tab.selectedViewController)
+        }
+        return root
     }
 }

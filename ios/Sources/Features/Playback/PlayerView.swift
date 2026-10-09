@@ -99,7 +99,17 @@ struct PlayerView: View {
                                  isLive: controller.isLive,
                                  onSelectEpisode: { switchTo($0) },
                                  onRate: { setRate($0) },
-                                 onClose: { showFullscreen = false })
+                                 onClose: { showFullscreen = false },
+                                 onPrev: { switchTo(index - 1) },
+                                 canGoPrev: index > 0,
+                                 onNext: { switchTo(index + 1) },
+                                 canGoNext: index < episodes.count - 1,
+                                 danmakuEnabled: danmakuEnabled,
+                                 onToggleDanmaku: {
+                                     danmakuEnabled.toggle()
+                                     library.settings.danmakuEnabled = danmakuEnabled
+                                     if danmakuEnabled, danmaku.isEmpty { Task { await loadDanmaku() } }
+                                 })
         }
         .task { await resolve() }
         .onAppear {
@@ -238,7 +248,9 @@ struct PlayerView: View {
                 }
                 .buttonStyle(.plain)
             } else if controller.active == .system {
-                VideoPlayer(player: controller.av.player)
+                PlayerHostView(player: controller.av.player,
+                               fill: controller.aspectMode.fills,
+                               pip: controller.pip)
             } else {
                 MPVVideoView(engine: controller.mpv)
             }
@@ -429,6 +441,21 @@ struct PlayerView: View {
                     .font(.subheadline)
                     .fontWeight(danmakuEnabled ? .semibold : .regular)
                     .frame(minWidth: 44, minHeight: 44)
+            }
+
+            Button { controller.cycleAspect() } label: {
+                Text(controller.aspectMode.label)
+                    .font(.caption2)
+                    .frame(minWidth: 44, minHeight: 44)
+            }
+
+            Button { controller.pip.start() } label: {
+                Image(systemName: "pip.enter").font(.title3).frame(width: 44, height: 44)
+            }
+            .disabled(controller.active != .system)
+
+            Button { Task { errorText = await controller.screenshot() } } label: {
+                Image(systemName: "camera").font(.title3).frame(width: 44, height: 44)
             }
 
             Button { showFullscreen = true } label: {

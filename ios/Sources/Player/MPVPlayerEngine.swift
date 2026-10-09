@@ -21,6 +21,7 @@ import Combine
 import UIKit
 import QuartzCore
 import Libmpv
+import Photos
 
 /// MoltenVK 需要的两个 workaround（照 MPVKit demo）
 final class MPVVideoLayer: CAMetalLayer {
@@ -71,7 +72,7 @@ final class MPVPlayerEngine: ObservableObject {
     /// 拉流和解码用的自定义请求头（防盗链源会给 Referer/UA）
     private var headerFields: [String: String] = [:]
 
-    private var mpv: OpaquePointer?
+    private(set) var mpv: OpaquePointer?
     private var prepared = false
     private var positionTimer: Timer?
     private var endFileReasonEof = false
@@ -274,6 +275,22 @@ final class MPVPlayerEngine: ObservableObject {
         return Int(value)
     }
 
+    /// 视频帧率（拿不到返回 0）
+    var containerFps: Double {
+        guard mpv != nil else { return 0 }
+        var value = Double()
+        guard mpv_get_property(mpv, "container-fps", MPV_FORMAT_DOUBLE, &value) >= 0 else { return 0 }
+        return value
+    }
+
+    /// 缓存/下载速度（字节每秒，拿不到返回 nil）
+    var cacheSpeed: Double? {
+        guard mpv != nil else { return nil }
+        var value = Double()
+        guard mpv_get_property(mpv, "cache-speed", MPV_FORMAT_DOUBLE, &value) >= 0, value > 0 else { return nil }
+        return value
+    }
+
     private func getFlag(_ name: String) -> Bool {
         guard let mpv else { return false }
         var value: Int32 = 0
@@ -367,5 +384,57 @@ final class MPVPlayerEngine: ObservableObject {
     @objc private func didBecomeActive() {
         guard let mpv, currentURL != nil else { return }
         mpv_set_property_string(mpv, "vid", "auto")
+    }
+}
+
+extension MPVPlayerEngine {
+
+    /// mpv 句柄（扩展里用这个名字）
+    fileprivate var handle: OpaquePointer? { mpv }
+
+    /// 画面比例：mpv 用 video-aspect-override（"no" = 跟随视频自己的比例）
+    func setVideoAspect(_ value: String) {
+        guard let handle = handle else { return }
+        mpv_set_property_string(handle, "video-aspect-override", value)
+    }
+
+    /// 铺满（裁边）开关
+    func setPanscan(_ value: Double) {
+        guard let handle = handle else { return }
+        mpv_set_property_string(handle, "panscan", String(format: "%.2f", value))
+    }
+
+    /// 截图（mpv 自己的截图命令，输出到临时目录），返回 PNG 路径
+    func screenshot() async -> String? {
+        guard let handle = handle else { return nil }
+        let path = NSTemporaryDirectory() + "caty-shot-" + String(Int(Date().timeIntervalSince1970)) + ".png"
+        await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                var args: [String?] = ["screenshot-to-file", path, "video", nil]
+                var cargs: [UnsafePointer<CChar>?] = args.map { $0.map { UnsafePointer(strdup($0)) } }
+                let code = mpv_command(handle, &cargs)
+                for pointer in cargs where pointer != nil { free(UnsafeMutablePointer(mutating: pointer!)) }
+                continuation.resume(returning: code >= 0 ? path : nil)
+            }
+        }.flatMap { $0 }
+    }
+}
+
+/// 截图存相册（需要 Info.plist 里的 NSPhotoLibraryAddUsageDescription）
+enum PlayerScreenshot {
+
+    static func saveToPhotos(path: String) async -> Bool {
+        guard let image = UIImage(contentsOfFile: path) else { return false }
+        let status = await withCheckedContinuation { (continuation: CheckedContinuation<PHAuthorizationStatus, Never>) in
+            PHPhotoLibrary.requestAuthorization(for: .addOnly) { continuation.resume(returning: $0) }
+        }
+        guard status == .authorized || status == .limited else { return false }
+        return await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
+            PHPhotoLibrary.shared().performChanges {
+                PHAssetChangeRequest.creationRequestForAsset(from: image)
+            } completionHandler: { success, _ in
+                continuation.resume(returning: success)
+            }
+        }
     }
 }

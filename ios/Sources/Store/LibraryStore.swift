@@ -86,6 +86,8 @@ struct AppSettings: Codable {
     var danmakuShowBottom: Bool = true
     /// 屏蔽词（逗号/空格分隔）
     var danmakuBlockWords: String = ""
+    /// "跳过片头"的秒数（0 = 不显示这个按钮）
+    var skipIntroSeconds: Int = 90
 
     init() {}
 
@@ -109,6 +111,7 @@ struct AppSettings: Codable {
         danmakuShowTop = try container.decodeIfPresent(Bool.self, forKey: .danmakuShowTop) ?? true
         danmakuShowBottom = try container.decodeIfPresent(Bool.self, forKey: .danmakuShowBottom) ?? true
         danmakuBlockWords = try container.decodeIfPresent(String.self, forKey: .danmakuBlockWords) ?? ""
+        skipIntroSeconds = try container.decodeIfPresent(Int.self, forKey: .skipIntroSeconds) ?? 90
     }
 }
 

@@ -55,6 +55,10 @@
 		<string>audio</string>
 	</array>
 
+	<!-- 截图存相册（播放页的截图按钮） -->
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>保存播放截图到你的相册。</string>
+
 	<!-- 可选：扫码导入源（P5 用） -->
 	<key>NSCameraUsageDescription</key>
 	<string>用于扫描源二维码来导入订阅。</string>

@@ -18,6 +18,12 @@ struct CatyApp: App {
 
     @StateObject private var coordinator = RuntimeCoordinator()
 
+    init() {
+        // 图片缓存：磁盘 500 MB / 内存 50 MB（docs/05 §2 的规格）
+        URLCache.shared = URLCache(memoryCapacity: 50 * 1024 * 1024,
+                                   diskCapacity: 500 * 1024 * 1024)
+    }
+
     var body: some Scene {
         WindowGroup {
             RootView(coordinator: coordinator, runtime: coordinator.runtime)

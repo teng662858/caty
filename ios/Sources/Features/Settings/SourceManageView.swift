@@ -12,6 +12,8 @@ import UIKit
 struct SourceManageView: View {
 
     @ObservedObject var coordinator: RuntimeCoordinator
+    /// 嵌进「设置」里时不要再套一层 NavigationStack
+    var embedded = false
 
     @State private var input = ""
     @State private var errorText: String?
@@ -19,18 +21,24 @@ struct SourceManageView: View {
     @State private var panelHint: String?
 
     var body: some View {
-        NavigationStack {
-            List {
-                statusSection
-                panelSection
-                importSection
-                listSection
-            }
-            .listStyle(.insetGrouped)
-            .navigationTitle("Caty · 源")
-            .navigationBarTitleDisplayMode(.inline)
-            .onAppear { coordinator.refreshRecords() }
+        if embedded {
+            content
+        } else {
+            NavigationStack { content }
         }
+    }
+
+    private var content: some View {
+        List {
+            statusSection
+            panelSection
+            importSection
+            listSection
+        }
+        .listStyle(.insetGrouped)
+        .navigationTitle("Caty · 源")
+        .navigationBarTitleDisplayMode(.inline)
+        .onAppear { coordinator.refreshRecords() }
     }
 
     // MARK: - 源配置中心（登录网盘）

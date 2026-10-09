@@ -88,6 +88,20 @@ struct VodItem: Identifiable, Hashable {
 
     var isFolder: Bool { tag == "folder" }
 
+    /// 显式构造（收藏/历史里存的镜像条目要还原成 VodItem 用）
+    init(id: String, name: String, pic: String?, remarks: String?, tag: String?,
+         typeName: String?, year: String?, siteKey: String, sourceId: String) {
+        self.id = id
+        self.name = name
+        self.pic = pic
+        self.remarks = remarks
+        self.tag = tag
+        self.typeName = typeName
+        self.year = year
+        self.siteKey = siteKey
+        self.sourceId = sourceId
+    }
+
     init?(json: [String: Any], siteKey: String, sourceId: String) {
         guard let id = json.str("vod_id"), let name = json.str("vod_name") else { return nil }
         self.id = id

@@ -11,6 +11,8 @@ import UIKit
 struct DiagnosticsView: View {
 
     @ObservedObject var runtime: NodeRuntime
+    /// 嵌进「设置」里时不要再套一层 NavigationStack
+    var embedded = false
 
     @State private var refreshTimer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
     @State private var logLines: [String] = []
@@ -19,19 +21,25 @@ struct DiagnosticsView: View {
     @State private var hint: String?
 
     var body: some View {
-        NavigationStack {
-            List {
-                statusSection
-                numbersSection
-                selfCheckSection
-                logSection
-            }
-            .listStyle(.insetGrouped)
-            .navigationTitle("Caty · P2 自检")
-            .navigationBarTitleDisplayMode(.inline)
-            .onAppear { refreshLog() }
-            .onReceive(refreshTimer) { _ in refreshLog() }
+        if embedded {
+            content
+        } else {
+            NavigationStack { content }
         }
+    }
+
+    private var content: some View {
+        List {
+            statusSection
+            numbersSection
+            selfCheckSection
+            logSection
+        }
+        .listStyle(.insetGrouped)
+        .navigationTitle("Caty · 诊断")
+        .navigationBarTitleDisplayMode(.inline)
+        .onAppear { refreshLog() }
+        .onReceive(refreshTimer) { _ in refreshLog() }
     }
 
     // MARK: - 状态

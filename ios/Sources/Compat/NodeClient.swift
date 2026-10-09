@@ -15,10 +15,24 @@
 
 import Foundation
 
-/// 首页内容：分类 + （可能的）一批条目 + 筛选项
+/// 首页内容：分类 + （可能的）一批条目 + 每个分类的筛选项
 struct HomeContent {
     var categories: [Category]
     var items: [VodItem]
+    /// key = type_id；值是这一分类的筛选项（源实测确实会返回 filters）
+    var filters: [String: [FilterGroup]] = [:]
+}
+
+/// 一个筛选维度（例如「地区」「类型」）
+struct FilterGroup: Identifiable, Hashable {
+    var id: String
+    var name: String
+    var options: [FilterOption]
+}
+
+struct FilterOption: Hashable {
+    var name: String
+    var value: String
 }
 
 final class NodeClient {
@@ -52,15 +66,23 @@ final class NodeClient {
         let payload = try await request("POST", api: site.api, query: [:], body: [:], operation: "home")
         let categories = Self.parseCategories(payload)
         let items = Self.parseItems(payload, site: site)
-        CatyLog.shared.info("site", "\(site.name) 首页：\(categories.count) 个分类，\(items.count) 条内容")
-        return HomeContent(categories: categories, items: items)
+        let filters = Self.parseFilters(payload)
+        CatyLog.shared.info("site", "\(site.name) 首页：\(categories.count) 个分类，\(items.count) 条内容" +
+            (filters.isEmpty ? "" : "，含筛选项"))
+        return HomeContent(categories: categories, items: items, filters: filters)
     }
 
     // MARK: - 分类内容
 
-    func category(site: SiteInfo, tid: String?, page: Int) async throws -> CategoryPage {
+    /// extend：筛选项（例如 ["area": "us"]）；源实测会带 filter/extend 一起提交
+    func category(site: SiteInfo, tid: String?, page: Int,
+                  extend: [String: String] = [:]) async throws -> CategoryPage {
         var body: [String: Any] = ["pg": String(page)]
         if let tid, !tid.isEmpty { body["tid"] = tid }
+        if !extend.isEmpty {
+            body["filter"] = "1"
+            body["extend"] = extend
+        }
 
         let payload = try await request("POST", api: site.api, query: [:], body: body, operation: "category")
         let items = Self.parseItems(payload, site: site)
@@ -149,6 +171,30 @@ final class NodeClient {
 
     private static func parseItems(_ payload: [String: Any], site: SiteInfo) -> [VodItem] {
         payload.dictArray("list").compactMap { VodItem(json: $0, siteKey: site.key, sourceId: site.sourceId) }
+    }
+
+    /// 解析 `filters`：形状是 { "<type_id>": [ {key, name, value:[{n, v}]} ] }
+    private static func parseFilters(_ payload: [String: Any]) -> [String: [FilterGroup]] {
+        guard let raw = payload["filters"] as? [String: Any] else { return [:] }
+        var result: [String: [FilterGroup]] = [:]
+        for (tid, value) in raw {
+            let groups = (value as? [Any])?.compactMap { $0 as? [String: Any] } ?? []
+            var parsed: [FilterGroup] = []
+            for group in groups {
+                let key = group.str("key") ?? ""
+                let name = group.str("name") ?? key
+                let options = group.dictArray("value").compactMap { option -> FilterOption? in
+                    let optionName = option.str("n") ?? option.str("name") ?? ""
+                    let optionValue = option.str("v") ?? option.str("value") ?? ""
+                    guard !optionName.isEmpty else { return nil }
+                    return FilterOption(name: optionName, value: optionValue)
+                }
+                guard !key.isEmpty, !options.isEmpty else { continue }
+                parsed.append(FilterGroup(id: key, name: name, options: options))
+            }
+            if !parsed.isEmpty { result[tid] = parsed }
+        }
+        return result
     }
 
     // MARK: - 底层请求

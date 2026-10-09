@@ -1,11 +1,10 @@
 //
 //  RootView.swift
-//  根视图：3 个 tab + 源主动要求的两个交互（toast / 内置网页）
+//  根视图：4 个 tab（首页 / 片库 / 搜索 / 设置）+ 源主动要求的两个交互（toast / 内置网页）
 //
 //  为什么需要这一层：真源实测会通过 /msg 桥主动推两种消息——
 //    · action=toast                → 它想给用户看的提示（例如「还没有配置夸克 Cookie…」）
 //    · action=openInternalWebview  → 它要求宿主打开一个内置网页（源的配置中心，用来登录网盘）
-//  这两条不接，用户就永远登不上网盘、也就永远播不了网盘源。
 //
 
 import SwiftUI
@@ -23,16 +22,15 @@ struct RootView: View {
             HomeView(coordinator: coordinator)
                 .tabItem { Label("首页", systemImage: "house") }
 
+            LibraryView(coordinator: coordinator)
+                .tabItem { Label("片库", systemImage: "books.vertical") }
+
             SearchView(coordinator: coordinator)
                 .tabItem { Label("搜索", systemImage: "magnifyingglass") }
 
-            SourceManageView(coordinator: coordinator)
-                .tabItem { Label("源", systemImage: "square.stack.3d.up") }
-
-            DiagnosticsView(runtime: runtime)
-                .tabItem { Label("诊断", systemImage: "waveform.path.ecg") }
+            SettingsView(coordinator: coordinator)
+                .tabItem { Label("设置", systemImage: "gearshape") }
         }
-        // 源要求打开内置网页（配置中心 / 网盘登录）
         .sheet(isPresented: Binding(
             get: { runtime.webPanelURL != nil },
             set: { if !$0 { runtime.closeWebPanel() } }
@@ -51,7 +49,6 @@ struct RootView: View {
                 }
             }
         }
-        // 源发来的提示（toast）
         .overlay(alignment: .bottom) {
             if toastVisible, let text = runtime.toastText {
                 Text(text)

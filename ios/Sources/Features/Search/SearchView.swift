@@ -34,6 +34,10 @@ struct SearchView: View {
                 .navigationDestination(for: AggregatorService.Hit.self) { hit in
                     DetailView(item: hit.item, site: hit.site, client: coordinator.client)
                 }
+                .navigationDestination(for: FolderTarget.self) { target in
+                    BrowseView(site: target.site, client: coordinator.client,
+                               initialTid: target.tid, title: target.title)
+                }
                 .toolbar { toolbarContent }
         }
     }

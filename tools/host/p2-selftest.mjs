@@ -69,8 +69,15 @@ function startBridge(port) {
   })
 }
 
-const get = async (path) => {
-  const res = await fetch(serviceBase + path)
+const get = async (path) => request('GET', path, undefined)
+
+const request = async (method, path, body) => {
+  const init = { method, headers: {} }
+  if (body !== undefined) {
+    init.headers['Content-Type'] = 'application/json'
+    init.body = JSON.stringify(body)
+  }
+  const res = await fetch(serviceBase + path, init)
   return { status: res.status, text: await res.text() }
 }
 
@@ -124,28 +131,32 @@ if (started.error) {
 }
 
 // 4) 客户端侧：把这些请求全部走一遍（与 iOS 自检屏的两个按钮 + P4 的取数路径一致）
+// 契约按 M0 实测来（POST + 三段式；GET/两段式应当 404）
 const checks = [
-  ['/config（站点目录）', '/config'],
-  ['/config/sites/list', '/config/sites/list'],
-  ['/versioning', '/versioning'],
-  ['/spider/demo/3（列表）', '/spider/demo/3'],
-  ['/spider/demo/3?ac=detail&ids=1（详情：两条线路 + 直链/标识各一集）', '/spider/demo/3?ac=detail&ids=1'],
-  ['/spider/demo/3?ac=play&flag=打桩线路&id=stub-episode-2（取播放地址）', '/spider/demo/3?ac=play&flag=%E6%89%93%E6%A1%A9%E7%BA%BF%E8%B7%AF&id=stub-episode-2'],
-  ['/spider/demo/3?ac=search&wd=测试', '/spider/demo/3?ac=search&wd=%E6%B5%8B%E8%AF%95'],
+  ['GET  /config（站点目录）', 'GET', '/config', undefined, 200],
+  ['GET  /config/sites/list', 'GET', '/config/sites/list', undefined, 200],
+  ['GET  /versioning', 'GET', '/versioning', undefined, 200],
+  ['GET  /health（源自带探活）', 'GET', '/health', undefined, 200],
+  ['POST /spider/demo/3/home（分类+filters）', 'POST', '/spider/demo/3/home', {}, 200],
+  ['POST /spider/demo/3/category（列表）', 'POST', '/spider/demo/3/category', { tid: '1', pg: '1' }, 200],
+  ['POST /spider/demo/3/detail（详情）', 'POST', '/spider/demo/3/detail', { id: '1' }, 200],
+  ['POST /spider/demo/3/search（搜索）', 'POST', '/spider/demo/3/search', { wd: '测试' }, 200],
+  ['POST /spider/demo/3/play（取播放地址）', 'POST', '/spider/demo/3/play', { flag: '打桩线路', id: 'stub-episode-2' }, 200],
+  ['GET  两段式（应当 404）', 'GET', '/spider/demo/3', undefined, 404],
 ]
 
 let allOk = true
-for (const [label, path] of checks) {
+for (const [label, method, path, body, expect] of checks) {
   try {
-    const r = await get(path)
-    const head = r.text.replace(/\s+/g, ' ').slice(0, 150)
-    const ok = r.status === 200 && r.text.length > 2
+    const r = await request(method, path, body)
+    const head = r.text.replace(/\s+/g, ' ').slice(0, 130)
+    const ok = r.status === expect
     if (!ok) allOk = false
-    console.log(`  ${ok ? '✓' : '✗'} ${String(r.status).padEnd(4)} ${label.padEnd(42)} ${head}`)
-    writeFileSync(join(DATA, `fixture${path.replace(/[^\w]+/g, '_')}.txt`), r.text)
+    console.log(`  ${ok ? '✓' : '✗'} ${String(r.status).padEnd(4)} ${label.padEnd(40)} ${head}`)
+    if (r.status === 200) writeFileSync(join(DATA, `fixture-${method}${path.replace(/[^\w]+/g, '_')}.txt`), r.text)
   } catch (error) {
     allOk = false
-    console.log(`  ✗ ERR  ${label.padEnd(42)} ${error.message}`)
+    console.log(`  ✗ ERR  ${label.padEnd(40)} ${error.message}`)
   }
 }
 

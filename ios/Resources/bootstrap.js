@@ -19,6 +19,7 @@
  */
 
 const http = require('node:http')
+const net = require('node:net')
 const path = require('node:path')
 const { pathToFileURL } = require('node:url')
 
@@ -124,12 +125,72 @@ function reportStarted() {
     version: process.version,
     arch: process.arch,
   })
+  startListenerWatchdog()
+}
+
+// ---- 7. 本地服务自愈
+// iOS 会在 App 被挂起时回收它的监听 socket：Node 还活着，但端口连不上了
+// （真机实测：启动 85 秒后宿主请求报"无法连接服务器"，而 node_start 并没有返回）。
+// 对策：每 10 秒从 Node 侧连一次自己；连不上就用**同一个端口**重建一个 server
+// （换端口会让宿主手里的旧地址失效，所以必须原地重绑）。
+let listenerWatchdog = null
+let lastHandler = null
+let rebindingNow = false
+
+function startListenerWatchdog() {
+  if (listenerWatchdog || !server) return
+  const address = server.address()
+  if (!address || typeof address !== 'object' || !address.port) return
+  const port = address.port
+
+  listenerWatchdog = setInterval(() => {
+    if (rebindingNow) return
+    const probe = net.connect({ host: '127.0.0.1', port })
+    let settled = false
+    const finish = (alive) => {
+      if (settled) return
+      settled = true
+      probe.removeAllListeners()
+      probe.destroy()
+      if (!alive) rebind(port)
+    }
+    probe.setTimeout(2000)
+    probe.once('connect', () => finish(true))
+    probe.once('error', () => finish(false))
+    probe.once('timeout', () => finish(false))
+  }, 10000)
+  listenerWatchdog.unref?.()
+  console.log(`[bootstrap] 监听自愈已开启（每 10s 自检 127.0.0.1:${port}）`)
+}
+
+function rebind(port) {
+  if (rebindingNow || !lastHandler) return
+  rebindingNow = true
+  console.warn(`[bootstrap] 监听已失效（App 挂起后 socket 被系统回收）→ 原地重绑 127.0.0.1:${port}`)
+
+  const fresh = http.createServer(lastHandler)
+  fresh.once('error', (error) => {
+    console.warn(`[bootstrap] 重绑失败：${error && error.code ? error.code : error}`)
+    rebindingNow = false
+  })
+  try {
+    fresh.listen({ host: '127.0.0.1', port, exclusive: true }, () => {
+      server = fresh
+      console.warn(`[bootstrap] 已重新监听 http://127.0.0.1:${port}`)
+      reportStarted()
+      rebindingNow = false
+    })
+  } catch (error) {
+    console.warn(`[bootstrap] 重绑异常：${error && error.message}`)
+    rebindingNow = false
+  }
 }
 
 // ---- 2. 注入宿主能力
 globalThis.catDartServerPort = () => bridgePort
 
 globalThis.catServerFactory = (handler) => {
+  lastHandler = handler
   server = http.createServer(handler)
   const listen = server.listen.bind(server)
   // 强制只监听回环 + 随机端口：避免冲突，也避免把本地服务暴露到局域网

@@ -327,6 +327,25 @@ async function getLocal(pathname) {
   }
 }
 
+/** 带方法/JSON body 的请求（真源的 spider 接口可能是 POST + JSON） */
+async function requestLocal(method, pathname, body) {
+  const ctl = new AbortController()
+  const timer = setTimeout(() => ctl.abort(), TIMEOUT)
+  try {
+    const headers = { 'User-Agent': UA }
+    const init = { method, headers, signal: ctl.signal }
+    if (body !== undefined) {
+      headers['Content-Type'] = 'application/json'
+      init.body = JSON.stringify(body)
+    }
+    const res = await fetch(serviceBase + pathname, init)
+    const text = await res.text()
+    return { status: res.status, contentType: res.headers.get('content-type'), text }
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 function saveFixture(name, text) {
   mkdirSync(FIXTURES, { recursive: true })
   const slug = name.replace(/[^a-zA-Z0-9._-]+/g, '_').slice(0, 80) || 'root'
@@ -426,43 +445,137 @@ for (const p of ['/config/sites/list', '/versioning']) {
 }
 
 // 6. 路由探测（M0 的核心产出：确认 endpoint 约定）
+//    真源的 spider 接口形态在家族之间不同：两段式 /spider/<key>/3 与三段式 /spider/<key>/3/<op>，
+//    方法可能是 GET 也可能是 POST(JSON)。这里把常见组合一次问全，省得来回猜。
 if (PROBE_ROUTES) {
-  console.log('\n--- 路由探测（用于确认 endpoint 命名，结果存 fixture）---')
-  let route = null
+  console.log('\n--- 路由探测（GET/POST × 两段式/三段式 × 多个站点 key）---')
+  let sites = []
   try {
-    const mapped = mapSites(JSON.parse(readFileSync(join(FIXTURES, 'res_config.txt'), 'utf8')))
-    route = mapped.sites[0]?.api
+    sites = mapSites(JSON.parse(readFileSync(join(FIXTURES, 'res_config.txt'), 'utf8'))).sites
   } catch { /* 忽略 */ }
-  if (!route) {
+  if (!sites.length) {
     console.log('（拿不到站点路由，跳过）')
   } else {
-    const candidates = [
-      '',
-      '?ac=list',
-      '?ac=detail&ids=1',
-      '?ac=search&wd=%E6%B5%8B%E8%AF%95',
-      '/home',
-      '/home?ac=list',
-      '/search?wd=%E6%B5%8B%E8%AF%95',
-      '/detail?ids=1',
-      '/homeContent',
-      '/category?tid=1&pg=1',
-      '/detailContent?ids=1',
-      '/searchContent?wd=%E6%B5%8B%E8%AF%95',
-      '/playerContent?flag=x&id=1',
+    const keys = []
+    for (const site of sites.slice(0, 2)) {
+      const raw = String(site.key || '')
+      keys.push(raw.startsWith('nodejs_') ? raw.slice(7) : raw)
+      if (raw.startsWith('nodejs_')) keys.push(raw)
+    }
+    const bases = [...new Set(keys)].filter(Boolean).map((k) => `/spider/${k}/3`)
+
+    const ops = [
+      ['GET', '', undefined],
+      ['GET', '?ac=list', undefined],
+      ['GET', '?ac=detail&ids=1', undefined],
+      ['GET', '?ac=search&wd=测试', undefined],
+      ['GET', '/home', undefined],
+      ['GET', '/home?raw=1', undefined],
+      ['POST', '/home', {}],
+      ['GET', '/category?tid=1&pg=1', undefined],
+      ['POST', '/category', { tid: '1', pg: '1' }],
+      ['GET', '/detail?ids=1', undefined],
+      ['POST', '/detail', { ids: '1' }],
+      ['GET', '/search?wd=测试', undefined],
+      ['POST', '/search', { wd: '测试' }],
+      ['GET', '/play?flag=x&id=1', undefined],
+      ['POST', '/play', { flag: 'x', id: '1' }],
     ]
-    const base = route.slice(5) // 去掉 node:
-    for (const c of candidates) {
-      const path = base + c
-      try {
-        const r = await getLocal(path)
-        const head = r.text.replace(/\s+/g, ' ').slice(0, 140)
-        console.log(`  ${String(r.status).padEnd(4)} ${path.padEnd(46)} ${head}`)
-        if (r.status === 200 && r.text.length > 2) saveFixture(`route${path}`, r.text)
-      } catch (error) {
-        console.log(`  ERR  ${path.padEnd(46)} ${error.message}`)
+
+    for (const base of bases) {
+      console.log(`\n  ▸ 基址 ${base}`)
+      for (const [method, suffix, body] of ops) {
+        const path = base + suffix
+        try {
+          const r = await requestLocal(method, path, body)
+          const head = r.text.replace(/\s+/g, ' ').slice(0, 130)
+          const ok = r.status === 200 && r.text.length > 2
+          console.log(`    ${ok ? '✓' : ' '} ${String(r.status).padEnd(4)} ${method.padEnd(4)} ${path.padEnd(44)} ${head}`)
+          if (ok) saveFixture(`route-${method}${path}`, r.text)
+        } catch (error) {
+          console.log(`    ✗ ERR  ${method.padEnd(4)} ${path.padEnd(44)} ${error.message}`)
+        }
       }
     }
+
+    // 顺带试服务自带的探活端点（A 家族实测有 /health 与 /check）
+    for (const path of ['/health', '/check', '/versioning', '/config/sites/list']) {
+      try {
+        const r = await getLocal(path)
+        const head = r.text.replace(/\s+/g, ' ').slice(0, 110)
+        console.log(`    ${r.status === 200 ? '✓' : ' '} ${String(r.status).padEnd(4)} GET  ${path.padEnd(44)} ${head}`)
+        if (r.status === 200) saveFixture(`probe${path}`, r.text)
+      } catch (error) {
+        console.log(`    ✗ ERR  GET  ${path.padEnd(44)} ${error.message}`)
+      }
+    }
+
+    // 6b. 串联探测：home → category(真实 tid) → detail(真实 vod_id) → play(真实集标识)
+    //     目的是把"请求体字段名"和"响应形状"一次定死，P4 的客户端照着写。
+    //     注意：不同站点的实现差异很大（豆瓣这类聚合站的返回可能是空的），所以挨个站点试。
+    console.log(`\n--- 串联探测（最多试 6 个站点，找到能用的形状为止）---`)
+    const tryPost = async (siteKey, op, body) => {
+      const r = await requestLocal('POST', `/spider/${siteKey}/3/${op}`, body)
+      let json = null
+      try { json = JSON.parse(r.text) } catch { /* 非 JSON */ }
+      return { status: r.status, json, text: r.text }
+    }
+
+    const skipKeys = new Set(['douban', 'gengxin', 'baseset', 'mypan'])
+    const candidates = sites.map((s) => String(s.key || '').replace(/^nodejs_/, '')).filter((k) => k && !skipKeys.has(k)).slice(0, 6)
+    let found = null
+    for (const key of candidates) {
+      const home = await tryPost(key, 'home', {})
+      const tids = (home.json?.class || []).map((c) => c.type_id).filter(Boolean)
+      console.log(`\n  ▸ 站点 ${key}: home → ${home.status}  class=${(home.json?.class || []).length} 条${home.json?.filters ? '（含 filters）' : ''}${tids.length ? `  tid[0]=${tids[0]}` : ''}`)
+      if (!tids.length) continue
+
+      const cat = await tryPost(key, 'category', { tid: tids[0], pg: '1' })
+      const list = cat.json?.list || []
+      console.log(`    category{tid,pg:"1"} → ${cat.status}  list=${list.length} 条${list[0] ? `  首条 ${list[0].vod_name}` : ''}`)
+      if (!list.length) continue
+      console.log(`    列表字段: ${Object.keys(list[0]).join(', ')}`)
+      saveFixture(`chain-${key}-category`, cat.text)
+
+      const vodId = list[0].vod_id
+      let detailOk = null
+      for (const body of [{ ids: vodId }, { id: vodId }, { ids: [vodId] }, { id: [vodId] }]) {
+        const det = await tryPost(key, 'detail', body)
+        const first = det.json?.list?.[0]
+        console.log(`    detail${JSON.stringify(body).slice(0, 44)} → ${det.status}  list=${(det.json?.list || []).length}${first ? `  《${first.vod_name}》` : ''}`)
+        if (first) { detailOk = { body, det, first }; break }
+      }
+
+      if (detailOk) {
+        const { det, first } = detailOk
+        console.log(`    详情字段: ${Object.keys(first).join(', ')}`)
+        console.log(`    vod_play_from=${String(first.vod_play_from || '').slice(0, 60)}`)
+        console.log(`    vod_play_url=${String(first.vod_play_url || '').slice(0, 90)}`)
+        saveFixture(`chain-${key}-detail`, det.text)
+
+        const flag = String(first.vod_play_from || '').split('$$$')[0] || ''
+        const firstEntry = String(first.vod_play_url || '').split('$$$')[0]?.split('#')[0] || ''
+        const playId = firstEntry.includes('$') ? firstEntry.split('$').slice(1).join('$') : firstEntry
+        if (playId) {
+          for (const body of [{ flag, id: playId }, { flag, ids: playId }, { flag, url: playId }]) {
+            const play = await tryPost(key, 'play', body)
+            const okish = play.json && (play.json.url || play.json.parse !== undefined)
+            console.log(`    play${JSON.stringify(body).slice(0, 50)} → ${play.status}  ${JSON.stringify(play.json).slice(0, 150)}`)
+            if (okish) { saveFixture(`chain-${key}-play`, play.text); break }
+          }
+        }
+        found = key
+      }
+
+      for (const body of [{ wd: '庆余年' }, { key: '庆余年' }, { wd: '庆余年', quick: false }]) {
+        const sres = await tryPost(key, 'search', body)
+        const count = (sres.json?.list || []).length
+        console.log(`    search${JSON.stringify(body)} → ${sres.status}  list=${count}${count ? `  首条 ${sres.json.list[0].vod_name}` : ''}`)
+        if (count) { saveFixture(`chain-${key}-search`, sres.text); break }
+      }
+      if (found) break
+    }
+    console.log(found ? `\n  ✓ 可用形状来自站点「${found}」，fixture 已存 fixtures/host/chain-*` : '\n  ✗ 没找到能走通 detail 的站点（把上面输出发我）')
   }
 }
 

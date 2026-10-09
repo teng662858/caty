@@ -76,7 +76,7 @@ struct BrowseView: View {
         .navigationDestination(for: VodItem.self) { item in
             DetailView(item: item, site: site, client: client)
         }
-        .task { await reload() }
+        .task { await loadInitial() }
     }
 
     private func chip(_ title: String, isSelected: Bool, action: @escaping () -> Void) -> some View {
@@ -92,6 +92,38 @@ struct BrowseView: View {
     }
 
     // MARK: - 取数
+
+    /// 先问 home 拿分类（实测：分类只在 home 里返回），再取第一个分类的第一页
+    @MainActor
+    private func loadInitial() async {
+        guard let client else {
+            errorText = "运行时还没就绪"
+            return
+        }
+        guard !loading else { return }
+        loading = true
+        defer { loading = false }
+
+        do {
+            let home = try await client.home(site: site)
+            categories = home.categories
+            items = home.items
+            page = 1
+            pageCount = 1
+
+            if let first = categories.first {
+                selectedTid = first.id
+                let result = try await client.category(site: site, tid: first.id, page: 1)
+                items = result.items
+                page = result.page
+                pageCount = result.pageCount
+            }
+            errorText = items.isEmpty ? "这个站点没有返回内容（换个分类或换站点试试）" : nil
+        } catch {
+            errorText = "首页取不到：\(error.localizedDescription)"
+            CatyLog.shared.warn("site", "首页取数失败：\(error.localizedDescription)")
+        }
+    }
 
     @MainActor
     private func reload() async {

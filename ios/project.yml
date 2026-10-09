@@ -10,6 +10,10 @@
 # 注意：NodeMobile.xcframework 不在仓库里（45 MB+，从国内推上去太慢）。
 #   - CI：由 .github/workflows/ios.yml 自动下载到 ios/Frameworks/
 #   - 本机（有 Mac）：手动下载后放到 ios/Frameworks/（见 docs/08-P2操作卡.md 第 1 步）
+#
+# libmpv（播放内核，P6）：走 SwiftPM 拉 mpvkit/MPVKit 的**预编译二进制包**（LGPL 版）。
+#   包里已含 libmpv + ffmpeg + libass + libplacebo + MoltenVK，链接设置由它自己声明，
+#   我们只要"声明依赖 + import Libmpv"，不需要自己编译 mpv，CI 上也没有额外下载步骤。
 
 name: Caty
 
@@ -18,6 +22,11 @@ options:
   createIntermediateGroups: true
   deploymentTarget:
     iOS: "17.0"
+
+packages:
+  MPVKit:
+    url: https://github.com/mpvkit/MPVKit
+    exactVersion: 1.0.0
 
 settings:
   base:
@@ -55,5 +64,7 @@ targets:
     dependencies:
       - framework: Frameworks/NodeMobile.xcframework
         embed: true                            # 等价于 Xcode 里的 Embed & Sign
+      - package: MPVKit                        # libmpv 播放内核（见文件头说明）
+        product: MPVKit
     scheme:
       testTargets: []

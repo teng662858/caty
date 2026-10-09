@@ -38,6 +38,7 @@ struct CatyApp: App {
             RootView(coordinator: coordinator, runtime: coordinator.runtime)
                 .onAppear {
                     CatyLog.shared.info("app", "Caty 启动")
+                    MPVProbe.logVersion()
                     Task { await coordinator.start() }
                 }
         }

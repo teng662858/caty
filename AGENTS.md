@@ -134,26 +134,36 @@ PeekPili / 魔力云播 / 蚂蚁影视 共用同一套格式），App 下载 →
 
 ## 当前进度与下一步
 
-进度以 `README.md` 的「当前状态」为准。**用户明确说：没有 Mac，要走不依赖编译的路径，尽快做出 App。**
+进度以 `README.md` 的「当前状态」为准。**用户是小白、没有 Mac、目标是自己手机上能用的播放器。**
 
-已完成：协议实测、UI 规格、小白手册、数据模型、冲刺计划、**P2/P3/P4 三包 iOS 代码**（`ios/` 下 22 个 Swift/资源文件）、
-**零 Mac 编译通路**（`.github/workflows/ios.yml` + `ios/project.yml` + `docs/09`）、
-P2/P4 链路桌面预演通过（`tools/host/p2-selftest.mjs`）。
+**已完成到"日常可用"**：
+- 协议实测（`docs/contract-notes.md`，POST + 三段式）→ `ios/` 30 个 Swift 文件（P2/P3/P4/P5 全交付）
+- **零 Mac 通路跑通**：GitHub Actions 出未签名 ipa → Windows Sideloadly 装机（真机 iOS 27.0.1）
+- **能播已完成**：真源 94 站点、启动 0.78s、缓存命中、直链站与网盘站（夸克）都能出画面
+- **P5 已完成**：4 tab（首页/片库/搜索/设置）、海报墙、分类+**按分类显示的筛选**、详情（收藏/续播/选集）、
+  播放器（进度记忆/倍速/上下集/全屏弹出）、片库（收藏+历史）、设置（配置中心/诊断/清缓存）
+- 真机联调修过的坑：桥连接生命周期、桥与 bundle 的监听自愈、跳集（导航栈堆积→改全屏弹出）、
+  海报不整齐、SwiftUI 表达式过深导致类型检查超时
 
-**下一步：等用户重装并回传日志**
+**下一步（P6 打磨，用户报什么先修什么）**：
+- 后台音频、播放手势（亮度/音量/快进）、动效、浅色模式
+- **libmpv**（mkv/4K 2160p/字幕/软解）——用户已遇到"2160p mkv 播不了"
+- 直播 EPG、弹幕渲染、iPad
 
-1. 用户重装 `dist/Caty-unsigned.ipa`（含 POST 契约 + 监听自愈 + 桥修复）→
-   看「诊断」是否 🟢 就绪，然后**导入真源**（用户已给三个地址；注意：地址带凭据，**不要写进任何文件**）
-   → 首页应出现真实站点与内容。
-2. 需要他回传：诊断页日志（`复制日志`，自动脱敏）、以及**真源首屏耗时 / 内存 / 是否崩**（M1 闸门数据）。
-3. 他给的源里 **播放需要先在源的配置中心登录网盘**（夸克等），play 会返回
-   `500 还没有配置夸克 Cookie…` → 这是预期行为，不是 bug；P5 要做 WebView 配置中心入口。
-
-**已经做完、不用重做的**：代码推到 `teng662858/caty`、CI 跑通并产出可用 ipa、真机跑起来了（Node v24.20.0、
-webAssembly/fetch 可用、0.08s）、D0 实测并写进 `docs/contract-notes.md`、
-客户端已按实测改成 POST 三段式。
-
-**还欠的活**：P5 代码包（按 `docs/02-ui-spec.md` 逐屏 + 搜索/收藏/历史/设置 + GRDB 落库 + toast 展示 + 配置中心 WebView）。
+**标准出包流程（新会话照这个走，用户只需装包）**：
+```bash
+# 1) 改代码后：自查 → 提交 → 推送（推送会自动触发云端编译）
+cd /d/Zcode/Catys && node tools/check-swift-heuristics.mjs ios
+git add -A && git commit -m "说明" && git push
+# 2) 盯 CI（约 1–3 分钟）
+gh run list --limit 1 && gh run view <id> --json status,conclusion
+# 3) 成功就下载 ipa（失败看 --log-failed 的 error: 行）
+rm -rf dist/ipa dist/Caty-unsigned.ipa
+gh run download <id> -n Caty-unsigned-ipa -D dist/ipa && cp dist/ipa/Caty-unsigned.ipa dist/Caty-unsigned.ipa
+# 4) 告诉用户：Sideloadly 拖 dist/Caty-unsigned.ipa 重装（覆盖安装，数据不丢）
+```
+⚠️ 两个已踩的坑：① SwiftUI 视图表达式别太深（拆小函数，否则报
+"unable to type-check this expression in reasonable time"）；② workflow 文件只能走网页界面改（见事实 15）。
 
 ## 工具（均已验证，可直接用）
 

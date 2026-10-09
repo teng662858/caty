@@ -27,6 +27,14 @@ const files = []
   }
 })(ROOT)
 
+/** 判断这个 / 是正则字面量的开始（前面是 = ( , : [ { ; ! & | ? + - * % < > 或行首） */
+function isRegexStart(source, index) {
+  let j = index - 1
+  while (j >= 0 && (source[j] === ' ' || source[j] === '	')) j--
+  if (j < 0) return true
+  return '=([{,:;!&|?+-*%<>'.includes(source[j])
+}
+
 /** 剥掉注释与字符串字面量，便于做括号计数 */
 function strip(source) {
   let out = ''
@@ -39,6 +47,15 @@ function strip(source) {
     } else if (two === '/*') {
       const end = source.indexOf('*/', i + 2)
       i = end === -1 ? n : end + 2
+    } else if (source[i] === '/' && isRegexStart(source, i)) {
+      // Swift 正则字面量 /…/（5.7+）：里面的括号不是代码的括号，要跳过去
+      // （弹幕那个 /<d p="…">…</d>/ 就把计数器带偏过一次）
+      i++
+      while (i < n && source[i] !== '\n') {
+        if (source[i] === '\\') { i += 2; continue }
+        if (source[i] === '/') { i++; break }
+        i++
+      }
     } else if (source[i] === '"') {
       // 处理 """ 多行字符串
       if (source.slice(i, i + 3) === '"""') {

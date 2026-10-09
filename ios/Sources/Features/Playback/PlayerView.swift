@@ -39,6 +39,9 @@ struct PlayerView: View {
     @State private var brightness: CGFloat = UIScreen.main.brightness
     @State private var volumeSlider: UISlider?
     @State private var longPressRate = false
+    /// 弹幕（P6）：从源里取这一集的弹幕，Canvas 画在画面上
+    @State private var danmaku: [DanmakuComment] = []
+    @State private var danmakuEnabled: Bool
 
     private let ticker = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
@@ -54,6 +57,7 @@ struct PlayerView: View {
         self.client = client
         _index = State(initialValue: request.index)
         _rate = State(initialValue: LibraryStore.shared.settings.rate)
+        _danmakuEnabled = State(initialValue: LibraryStore.shared.settings.danmakuEnabled)
     }
 
     @Environment(\.dismiss) private var dismiss
@@ -229,6 +233,15 @@ struct PlayerView: View {
                 MPVVideoView(engine: controller.mpv)
             }
 
+            if danmakuEnabled, !danmaku.isEmpty {
+                DanmakuOverlay(comments: danmaku,
+                               position: { extrapolatedPosition },
+                               isPlaying: { controller.isPlaying })
+                    .padding(.horizontal, 2)
+                    .padding(.top, 2)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            }
+
             if let hud {
                 GestureHUDView(hud: hud)
             }
@@ -388,6 +401,17 @@ struct PlayerView: View {
                     .padding(.horizontal, 4)
             }
 
+            Button {
+                danmakuEnabled.toggle()
+                library.settings.danmakuEnabled = danmakuEnabled
+                if danmakuEnabled, danmaku.isEmpty { Task { await loadDanmaku() } }
+            } label: {
+                Text(danmakuEnabled ? "弹幕" : "弹")
+                    .font(.subheadline)
+                    .fontWeight(danmakuEnabled ? .semibold : .regular)
+                    .frame(minWidth: 44, height: 44)
+            }
+
             Button { showFullscreen = true } label: {
                 Image(systemName: "arrow.up.left.and.arrow.down.right")
                     .font(.title3)
@@ -492,6 +516,13 @@ struct PlayerView: View {
                                                              site: request.site)
             controller.update(preference: PlayerKernelPreference.from(library.settings.playerKernel), rate: rate)
             controller.load(url: url, headers: headers, title: episode.name)
+            // 源会问"现在播什么"来配弹幕；把上下文给它
+            PlaybackContext.shared.update(title: item.name,
+                                          episodeName: episode.name,
+                                          flag: request.flag,
+                                          fileName: episode.url)
+            danmaku = []
+            if danmakuEnabled { Task { await loadDanmaku() } }
 
             // 断点续播：同一集的进度超过 10 秒才跳（等播放器准备好再 seek）
             if library.settings.rememberProgress,
@@ -517,6 +548,22 @@ struct PlayerView: View {
     private func tick() {
         guard !resolving else { return }
         saveProgress(force: false)
+    }
+
+    /// 播放位置外推：采样是 0.35s 一次，弹幕要按帧动，所以"位置 + 这之后过去的时间×倍速"
+    private var extrapolatedPosition: Double {
+        guard controller.isPlaying else { return controller.position }
+        return controller.position + Date().timeIntervalSince(controller.positionUpdatedAt) * rate
+    }
+
+    /// 取这一集的弹幕（源的 /danmu/auto：<剧名> + <第几集>）
+    private func loadDanmaku() async {
+        // 弹幕接口在**这个站点所属的那个源**上（多源同进程时必须用对地址）
+        guard let client, let base = client.base(for: request.site.sourceId) else { return }
+        let comments = await DanmakuService.comments(base: base,
+                                                     name: item.name,
+                                                     episode: index + 1)
+        danmaku = comments
     }
 
     private func saveProgress(force: Bool) {

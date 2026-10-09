@@ -41,6 +41,11 @@ final class BridgeServer {
     /// /health 的响应体（必须线程安全，见 NodeRuntime.healthBox）
     var healthProvider: (() -> [String: Any])?
 
+    /// /msg 的**回复体**提供者：源有些动作是"问宿主再等回答"的
+    /// （实测 A 家族弹幕流程：源 await messageToDart({action:"getPlayInfo"}) 拿剧名/集名，
+    ///  拿不到就直接跳过弹幕）。必须在 bridge 队列上同步返回，所以用线程安全的盒子。
+    var replyProvider: ((Message) -> [String: Any]?)?
+
     private let queue = DispatchQueue(label: "caty.bridge")
     private var listener: NWListener?
     private var startCompletion: ((Result<UInt16, Error>) -> Void)?
@@ -219,9 +224,15 @@ final class BridgeServer {
                 action = object["action"] as? String ?? ""
                 opt = object["opt"] as? [String: Any] ?? [:]
             }
-            respond(200, Data("{}".utf8))
+            let message = Message(action: action, opt: opt)
+            let reply = action.isEmpty ? nil : replyProvider?(message)
+            if let reply,
+               let data = try? JSONSerialization.data(withJSONObject: reply, options: [.sortedKeys]) {
+                respond(200, data)
+            } else {
+                respond(200, Data("{}".utf8))
+            }
             if !action.isEmpty {
-                let message = Message(action: action, opt: opt)
                 DispatchQueue.main.async { [weak self] in self?.onMessage?(message) }
             } else {
                 CatyLog.shared.warn("bridge", "收到无法解析的 /msg 请求（body \(request.body.count)B）")

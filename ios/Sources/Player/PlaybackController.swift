@@ -53,6 +53,8 @@ final class PlaybackController: ObservableObject {
     @Published private(set) var position: Double = 0
     @Published private(set) var duration: Double = 0
     @Published private(set) var buffering = false
+    /// 最近一次采样到 position 的时刻（弹幕要按"位置 + 过去的时间"外推，才跟得上画面）
+    private(set) var positionUpdatedAt = Date()
     @Published private(set) var errorText: String?
     /// 状态提示（例如"系统内核播不了，已自动切 mpv"）
     @Published private(set) var kernelNote: String?
@@ -213,6 +215,7 @@ final class PlaybackController: ObservableObject {
     }
 
     private func sample() {
+        positionUpdatedAt = Date()
         switch active {
         case .system:
             isPlaying = av.isPlaying

@@ -117,8 +117,12 @@ final class NodeRuntime: ObservableObject {
     @Published private(set) var toastText: String?
     @Published private(set) var webPanelURL: URL?
 
+    /// 源推来的弹幕地址（danmuPush）——播放页收到就去取
+    @Published private(set) var danmakuPushURL: String?
+
     func clearToast() { toastText = nil }
     func closeWebPanel() { webPanelURL = nil }
+    func clearDanmakuPush() { danmakuPushURL = nil }
 
     /// 手动打开源的配置中心（源自带的网页面板：登录夸克/百度等网盘就在里面）
     /// 兜底用：万一源发来的 openInternalWebview 消息没送达（例如 App 刚被挂起过），用户也能自己点开
@@ -237,6 +241,11 @@ final class NodeRuntime: ObservableObject {
         self.token = token
         let bridge = BridgeServer(token: token)
         bridge.healthProvider = { [weak self] in self?.healthBox.get() ?? ["ok": false] }
+        bridge.replyProvider = { message in
+            // 源问"现在播什么"（弹幕要靠它对上剧名/集号）
+            guard message.action == "getPlayInfo" else { return nil }
+            return PlaybackContext.shared.current
+        }
         bridge.onMessage = { [weak self] message in self?.handle(message) }
         self.bridge = bridge
 
@@ -361,6 +370,13 @@ final class NodeRuntime: ObservableObject {
                 ?? "(源发来一条提示)"
             toastText = text
             CatyLog.shared.info("bridge", "源提示：\(text)（参数键=\(message.opt.keys.sorted().joined(separator: ","))）")
+
+        case "danmuPush":
+            // 源把"这一集的弹幕地址"推过来（它自己构造的 /danmu/auto?...）
+            if let url = message.opt["url"] as? String, !url.isEmpty {
+                danmakuPushURL = url
+                CatyLog.shared.info("bridge", "源推来弹幕地址：(url)")
+            }
 
         case "openInternalWebview":
             let raw = message.opt["url"] as? String ?? message.opt["link"] as? String ?? ""

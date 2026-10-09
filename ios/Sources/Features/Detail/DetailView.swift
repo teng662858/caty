@@ -141,58 +141,68 @@ struct DetailView: View {
 
     @ViewBuilder
     private var actions: some View {
-        // ⚠️ 两个按钮**等宽平分**，内容各自居中（用户反馈"继续观看的字不在胶囊中间"）：
-        // 以前按钮按内容自适应宽度 + 末尾有个 Spacer，宽的那个看着就像"文字偏在一边"。
+        // ⚠️ 自己画按钮，**不用系统的 bordered/borderedProminent**：
+        // 那两个样式会自己加内边距/基线对齐，长一点的标题（"继续观看 第 02 集"）看着就"往上偏"。
+        // 这里图标+文字整组用 frame(maxWidth:minHeight:) 撑满并居中，横竖都对着色块正中。
         HStack(spacing: Theme.spacingS) {
-            Button {
+            actionButton(title: library.isFavorite(item) ? "已收藏" : "收藏",
+                         systemImage: library.isFavorite(item) ? "heart.fill" : "heart",
+                         filled: false,
+                         tint: library.isFavorite(item) ? .pink : Theme.accent) {
                 library.toggleFavorite(item)
-            } label: {
-                Label(library.isFavorite(item) ? "已收藏" : "收藏",
-                      systemImage: library.isFavorite(item) ? "heart.fill" : "heart")
-                    .font(.subheadline)
-                    .lineLimit(1)
-                    .frame(maxWidth: .infinity)
             }
-            .buttonStyle(.bordered)
-            .tint(library.isFavorite(item) ? .pink : Theme.accent)
 
             if let record = library.history(for: item), record.positionSec > 5,
                record.episodeIndex >= 0, record.episodeIndex < episodes.count {
-                Button {
+                actionButton(title: "继续观看 \(record.episodeName)",
+                             systemImage: "play.circle",
+                             filled: true,
+                             tint: Theme.accent) {
                     present(index: record.episodeIndex)
-                } label: {
-                    Label("继续观看 \(record.episodeName)", systemImage: "play.circle")
-                        .font(.subheadline)
-                        .lineLimit(1)
-                        .frame(maxWidth: .infinity)
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(Theme.accent)
             } else {
-                Button {
+                actionButton(title: episodes.count > 1 ? "开始播放 第 1 集" : "开始播放",
+                             systemImage: "play.circle",
+                             filled: true,
+                             tint: Theme.accent,
+                             enabled: !episodes.isEmpty) {
                     present(index: 0)
-                } label: {
-                    Label("开始播放", systemImage: "play.circle")
-                        .font(.subheadline)
-                        .lineLimit(1)
-                        .frame(maxWidth: .infinity)
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(Theme.accent)
-                .disabled(episodes.isEmpty)
             }
 
             if item.isFolder {
                 NavigationLink(value: FolderTarget(site: effectiveSite, tid: item.id, title: item.name)) {
-                    Label("进入目录", systemImage: "folder")
-                        .font(.subheadline)
-                        .lineLimit(1)
-                        .frame(maxWidth: .infinity)
+                    actionLabel(title: "进入目录", systemImage: "folder", filled: false, tint: Theme.accent)
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(.plain)
             }
         }
         .padding(.top, 2)
+    }
+
+    /// 图标 + 文字整组居中（水平垂直都居中）的按钮
+    private func actionButton(title: String, systemImage: String, filled: Bool,
+                              tint: Color, enabled: Bool = true,
+                              action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            actionLabel(title: title, systemImage: systemImage, filled: filled, tint: tint)
+        }
+        .buttonStyle(.plain)
+        .disabled(!enabled)
+    }
+
+    private func actionLabel(title: String, systemImage: String, filled: Bool, tint: Color) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: systemImage)
+            Text(title).lineLimit(1)
+        }
+        .font(.subheadline)
+        .frame(maxWidth: .infinity, minHeight: 46, alignment: .center)
+        .padding(.horizontal, 10)
+        .foregroundStyle(filled ? Color.white : tint)
+        .background(filled ? tint : tint.opacity(0.12),
+                    in: RoundedRectangle(cornerRadius: 10))
+        .contentShape(RoundedRectangle(cornerRadius: 10))
     }
 
     // MARK: - 线路 / 选集

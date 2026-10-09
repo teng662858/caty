@@ -67,6 +67,18 @@ targets:
         # 少了就报 "___cxa_throw / ___gxx_personality_v0 undefined"（CI 上踩过）。
         OTHER_LDFLAGS: "$(inherited) -lc++ -lz -lbz2 -liconv -lresolv -lexpat -lxml2"
     dependencies:
+      # libmpv/ffmpeg 需要的系统框架（等价于 MPVKit Package.swift 里声明的 linkedFramework）
+      # 少了 VideoToolbox 会报一堆 kVTCompressionPropertyKey_* 找不到（CI 上踩过）
+      - sdk: AVFoundation.framework
+      - sdk: CoreAudio.framework
+      - sdk: AudioToolbox.framework
+      - sdk: CoreMedia.framework
+      - sdk: CoreVideo.framework
+      - sdk: CoreFoundation.framework
+      - sdk: Metal.framework
+      - sdk: VideoToolbox.framework
+      - sdk: Security.framework
+      - sdk: UIKit.framework
       - framework: Frameworks/NodeMobile.xcframework
         embed: true                            # 等价于 Xcode 里的 Embed & Sign
       - framework: Frameworks/mpvkit/Libmpv.xcframework

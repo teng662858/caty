@@ -310,11 +310,12 @@ function waitForListen(entry, timeoutMs = 60000) {
 /** 启动一个源：设环境 → chdir → require → start()。失败只影响它自己 */
 async function startSource(source) {
   const entry = entryOf(source.id)
-  if (entry.entryStarted) {
+  if (entry.entryStarted && entry.server) {
     console.warn(`[bootstrap] 源 ${source.id} 已经在跑，忽略重复启动`)
     return entry.address
   }
   entry.entryStarted = true
+  lastSourceErrors.delete(source.id)
   entry.index = source.index
   entry.config = source.config
   entry.dataRoot = source.dataRoot
@@ -345,13 +346,16 @@ async function startSource(source) {
     await runtime.start(config)
     const address = await waitForListen(entry, 60000)
     if (!address) {
-      send('sourceError', { id: source.id, message: 'start() 返回了，但始终没有监听任何端口' })
+      const message = 'start() 返回了，但始终没有监听任何端口（多数是这份 bundle 已经在这个进程里跑过）'
+      lastSourceErrors.set(source.id, message)
+      send('sourceError', { id: source.id, message })
       return null
     }
     return address
   } catch (error) {
-    const message = String((error && (error.stack || error.message)) || error)
+    const message = String((error && (error.message || error.stack)) || error)
     console.error(`[bootstrap] 源 ${source.id} 启动失败：${message}`)
+    lastSourceErrors.set(source.id, message.slice(0, 300))
     send('sourceError', { id: source.id, message: message.slice(0, 600) })
     return null
   } finally {
@@ -361,6 +365,9 @@ async function startSource(source) {
 
 /** 在这个进程里 require 过的 index.js 路径 */
 const loadedPaths = new Set()
+
+/** 每个源最后一次启动失败的原因（控制口把它带回给宿主） */
+const lastSourceErrors = new Map()
 
 /**
  * 同一个 index.js 只能 require 一次（Node 有模块缓存）：第二次 require 拿到的是**同一个
@@ -509,6 +516,9 @@ async function controlHandler(req, res) {
     })
     entry.server = null
     entry.address = null
+    // ⚠️ 必须复位：否则用户"关掉再打开"这个源时会被"已经在跑"挡住 → 控制口返回 500
+    //（真机上踩过：源管理里关掉再打开 9280，报 `/ctl/source 返回 500 {"address":null}`）
+    entry.entryStarted = false
     if (entry.watchdog) {
       clearInterval(entry.watchdog)
       entry.watchdog = null

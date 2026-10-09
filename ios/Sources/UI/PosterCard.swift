@@ -11,6 +11,8 @@ import SwiftUI
 struct PosterImage: View {
 
     let urlString: String?
+    /// 没有封面时显示的文字（用片名的前几个字当"文字封面"）
+    var fallbackText: String?
 
     var body: some View {
         // 固定 2:3 的盒子：不管图片自身多大，格子永远一样大 → 网格整齐
@@ -39,12 +41,23 @@ struct PosterImage: View {
         }
     }
 
+    @ViewBuilder
     private func placeholder(systemName: String) -> some View {
         ZStack {
             Color.secondary.opacity(0.12)
-            Image(systemName: systemName)
-                .font(.title3)
-                .foregroundStyle(.secondary)
+            // 有片名就用"文字封面"（有些站点源里就没有封面图，比一个灰图标好看也好认）
+            if let text = fallbackText, !text.isEmpty {
+                Text(String(text.prefix(4)))
+                    .font(.system(size: 15, weight: .semibold))
+                    .multilineTextAlignment(.center)
+                    .lineLimit(2)
+                    .padding(6)
+                    .foregroundStyle(Theme.accent.opacity(0.85))
+            } else {
+                Image(systemName: systemName)
+                    .font(.title3)
+                    .foregroundStyle(.secondary)
+            }
         }
     }
 }
@@ -60,7 +73,7 @@ struct PosterCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
             ZStack(alignment: .bottomTrailing) {
-                PosterImage(urlString: item.pic)
+                PosterImage(urlString: item.pic, fallbackText: item.name)
                     .clipShape(RoundedRectangle(cornerRadius: Theme.posterRadius))
 
                 if showRemarks, let remarks = item.remarks, !remarks.isEmpty {
@@ -87,7 +100,7 @@ struct VodRow: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: Theme.spacingM) {
-            PosterImage(urlString: item.pic)
+            PosterImage(urlString: item.pic, fallbackText: item.name)
                 .frame(width: 54, height: 81)
                 .clipShape(RoundedRectangle(cornerRadius: 6))
 

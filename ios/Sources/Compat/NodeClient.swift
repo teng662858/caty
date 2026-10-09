@@ -72,12 +72,22 @@ final class NodeClient {
 
     // MARK: - 源地址表（多源）
 
+    /// 静态方法（解析列表项）也要知道"哪个源在哪个地址"，这里放一份同内容的副本
+    private static var baseCache: [String: String] = [:]
+    private static let baseCacheLock = NSLock()
+
     func setBase(_ base: String, for sourceId: String) {
         bases[sourceId] = base
+        Self.baseCacheLock.lock()
+        Self.baseCache[sourceId] = base
+        Self.baseCacheLock.unlock()
     }
 
     func removeBase(for sourceId: String) {
         bases[sourceId] = nil
+        Self.baseCacheLock.lock()
+        Self.baseCache[sourceId] = nil
+        Self.baseCacheLock.unlock()
     }
 
     /// 站点 / 源 → 该用哪个本地服务地址
@@ -165,9 +175,10 @@ final class NodeClient {
         await initSite(site)
         let payload = try await request(base: try requireBase(site), "POST", api: site.api, query: [:], body: ["id": ids], operation: "detail")
         guard let raw = payload.dictArray("list").first,
-              let item = VodItem(json: raw, siteKey: site.key, sourceId: site.sourceId) else {
+              var item = VodItem(json: raw, siteKey: site.key, sourceId: site.sourceId) else {
             return nil
         }
+        item.pic = Self.normalizePic(item.pic, base: base(for: site.sourceId))
         let parsed = PlayUrlParser.parse(playFrom: raw.str("vod_play_from"), playUrl: raw.str("vod_play_url"))
         return VodDetail(item: item,
                          content: raw.str("vod_content"),
@@ -240,7 +251,28 @@ final class NodeClient {
     }
 
     private static func parseItems(_ payload: [String: Any], site: SiteInfo) -> [VodItem] {
-        payload.dictArray("list").compactMap { VodItem(json: $0, siteKey: site.key, sourceId: site.sourceId) }
+        payload.dictArray("list").compactMap { raw in
+            guard var item = VodItem(json: raw, siteKey: site.key, sourceId: site.sourceId) else { return nil }
+            item.pic = normalizePic(item.pic, base: base(forSource: site.sourceId))
+            return item
+        }
+    }
+
+    /// 封面地址归一化：源有时给 `/imageProxy?url=…` 这种相对地址（真机上会变成没有封面）。
+    /// 相对地址要补上**它所属那个源**的本地地址（多源同进程时不能用别的源）。
+    static func normalizePic(_ raw: String?, base: String?) -> String? {
+        guard let raw, !raw.isEmpty else { return nil }
+        if raw.hasPrefix("http://") || raw.hasPrefix("https://") { return raw }
+        if raw.hasPrefix("//") { return "http:" + raw }
+        if raw.hasPrefix("/"), let base { return base + raw }
+        return raw
+    }
+
+    /// 给静态方法用的小包装：从缓存里取该源地址
+    private static func base(forSource sourceId: String) -> String? {
+        baseCacheLock.lock()
+        defer { baseCacheLock.unlock() }
+        return baseCache[sourceId]
     }
 
     /// 解析 `filters`：形状是 { "<type_id>": [ {key, name, value:[{n, v}]} ] }

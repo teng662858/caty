@@ -74,7 +74,7 @@ final class BundleStore {
         let storedCredentials = KeychainStore.get(account: source.id)
         let authorization = storedCredentials.map { SubscriptionParser.basicAuthHeader(credentials: $0) }
         CatyLog.shared.info("store",
-            "检查更新：\(SourceRecord.mask(source.url))  凭据=\(authorization == nil ? "无" : "有（\(storedCredentials?.count ?? 0) 字符）")")
+            "检查更新：\(SubscriptionParser.mask(source.url))  凭据=\(authorization == nil ? "无" : "有（\(storedCredentials?.count ?? 0) 字符）")")
 
         let root = try CatyPaths.bundlesRoot(source.id)
         let active = root.appendingPathComponent("active", isDirectory: true)

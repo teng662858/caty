@@ -9,6 +9,10 @@ struct LibraryView: View {
 
     @ObservedObject var coordinator: RuntimeCoordinator
     @ObservedObject private var library = LibraryStore.shared
+    @Environment(\.horizontalSizeClass) private var sizeClass
+
+    /// iPad / 横屏：海报多铺两列（和首页同一套规则）
+    private var isWideLayout: Bool { sizeClass == .regular }
 
     @State private var tab = 0
 
@@ -54,7 +58,7 @@ struct LibraryView: View {
             StateView(kind: .empty("还没有收藏", hint: "在详情页点「收藏」就会出现在这里"))
         } else {
             ScrollView {
-                LazyVGrid(columns: Theme.posterColumns(library.settings.gridColumns),
+                LazyVGrid(columns: Theme.posterColumns(library.settings.gridColumns, wide: isWideLayout),
                           spacing: Theme.spacingM) {
                     ForEach(library.favorites) { record in
                         NavigationLink(value: record.item.asVodItem) {

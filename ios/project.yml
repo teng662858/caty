@@ -34,7 +34,7 @@ settings:
     SWIFT_VERSION: "5.0"                      # 不要用 Swift 6：严格并发会报一堆错
     SWIFT_STRICT_CONCURRENCY: minimal
     IPHONEOS_DEPLOYMENT_TARGET: "17.0"
-    TARGETED_DEVICE_FAMILY: "1"               # 只做 iPhone
+    TARGETED_DEVICE_FAMILY: "1,2"             # iPhone + iPad（iPad 上自动多铺两列）
     ENABLE_BITCODE: "NO"
     ENABLE_USER_SCRIPT_SANDBOXING: "NO"
     ALWAYS_SEARCH_USER_PATHS: "NO"

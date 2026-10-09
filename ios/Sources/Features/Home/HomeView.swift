@@ -15,6 +15,11 @@ struct HomeView: View {
 
     @ObservedObject var coordinator: RuntimeCoordinator
     @ObservedObject private var library = LibraryStore.shared
+    @Environment(\.horizontalSizeClass) private var sizeClass
+
+    /// iPad / 横屏：海报多铺两列（同一个"每行 3 个"设置在 iPad 上不会显得稀稀拉拉）
+    private var isWideLayout: Bool { sizeClass == .regular }
+    private var wideColumnCount: Int { library.settings.gridColumns + (isWideLayout ? 2 : 0) }
 
     /// 当前选中的站点：用 SiteInfo.id（= sourceId|key）——多源同时跑时 key 可能重名
     @State private var siteId: String?
@@ -190,7 +195,7 @@ struct HomeView: View {
         } else if loading && items.isEmpty {
             VStack(spacing: Theme.spacingM) {
                 loadingBanner
-                PosterSkeletonGrid(columns: library.settings.gridColumns)
+                PosterSkeletonGrid(columns: wideColumnCount)
             }
         } else if isSearchOnlySite {
             // 体检确认过：这些站点（"搜索|xxx"、部分"🏠"类）本来就不返回分类列表，
@@ -239,7 +244,7 @@ struct HomeView: View {
     }
 
     private var grid: some View {
-        LazyVGrid(columns: Theme.posterColumns(library.settings.gridColumns), spacing: Theme.spacingM) {
+        LazyVGrid(columns: Theme.posterColumns(library.settings.gridColumns, wide: isWideLayout), spacing: Theme.spacingM) {
             ForEach(items) { item in
                 NavigationLink(value: item) {
                     PosterCard(item: item, showRemarks: true, titleFont: .footnote)

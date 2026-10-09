@@ -23,8 +23,9 @@ enum Theme {
     /// 海报宽高比（2:3）
     static let posterAspect: CGFloat = 2.0 / 3.0
 
-    static func posterColumns(_ count: Int) -> [GridItem] {
-        let columns = max(2, min(5, count))
+    /// wide = true（iPad / 横屏）时多铺两列：同一个"每行 3 个"的设置在 iPad 上不会显得稀稀拉拉
+    static func posterColumns(_ count: Int, wide: Bool = false) -> [GridItem] {
+        let columns = max(2, min(8, wide ? count + 2 : count))
         return Array(repeating: GridItem(.flexible(), spacing: spacingM), count: columns)
     }
 }

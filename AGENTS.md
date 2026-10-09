@@ -178,6 +178,22 @@ PeekPili / 魔力云播 / 蚂蚁影视 共用同一套格式），App 下载 →
   播放器（进度记忆/倍速/上下集/全屏弹出）、片库（收藏+历史）、设置（配置中心/诊断/清缓存）
 - 真机联调修过的坑：桥连接生命周期、桥与 bundle 的监听自愈、跳集（导航栈堆积→改全屏弹出）、
   海报不整齐、SwiftUI 表达式过深导致类型检查超时
+- **2026-10-10 第五轮：播放页重做（综合同类 App 优点）+ 三条真机问题**：
+  · 统一控制层 `PlayerControlsOverlay`（state/actions 两个结构体 + 小块 @ViewBuilder）：顶栏（返回·剧名集·弹幕/截图/画中画/比例/旋转/锁定）
+    + 中间（±10 秒·大播放键）+ 底部（信息行·进度·上一集/播放/下一集·片头/弹幕/选集/倍速/比例胶囊）；点画面显隐、4.5s 自动隐藏、**锁定后只剩解锁键**
+  · **画中画**：`AVPlayerLayer + AVPictureInPictureController(playerLayer:)`（只有系统内核能开；mpv 自己渲染到 CAMetalLayer，系统不给 PiP）
+  · **截图**：mpv 用 `screenshot-to-file` + 存相册（Info.plist 已加 NSPhotoLibraryAddUsageDescription）；系统内核会提示切 mpv
+  · **画面比例**：自适应/铺满/16:9/4:3（系统内核改 AVPlayerLayer.videoGravity，mpv 改 video-aspect-override/panscan）
+  · **记片头**：设置里选 0/30/60/90/120 秒，底栏一键跳
+  · 长按倍速只在 `perform` 里生效（`onPressingChanged` 一按下就是 true → 之前"点一下画面就 2 倍速"）
+  · 竖屏短剧不硬转横屏：全屏按视频宽高比决定方向（竖屏保持竖屏），顶栏可手动旋转
+  · **站点脚本管理**（设置 → 站点脚本）：容器型源的「直」/「盘」站点靠外部 JS 脚本（每站点一个 `<key>.js`），
+    支持 .cjs.md5 订阅下载 / 从文件导入；写入 `$NODE_PATH/js`、`~/Library/Application Support/CatPaw/js`、
+    `CATPAW_CUSTOM_SPIDER_DIR` 三处（不同源家族看不同目录），装完重启 App 生效
+  · **编译踩坑（写给以后的会话）**：❌ 别把十几个参数摊给一个 View（swift-frontend 会**静默崩掉**，日志里没有 error 行）——
+    改 `state/actions` 两个结构体 + 小块 @ViewBuilder 就好了；❌ 别用 `@ObservedObject = 单例`，用 `@State + .onReceive(singleton.$x)`；
+    ❌ 别写 `?: { … } : nil` 这种"闭包三元"，改 `Bool + 普通闭包`；
+    ✅ 定位手段：`project.yml` 里设 `SWIFT_COMPILATION_MODE: singlefile`，日志就会**点名**是哪个文件（batch 模式不报）
 - **2026-10-10 第四轮：P6 全部做完**：libmpv 内核（MPVKit + MoltenVK 渲染 + 内核选择/自动回退）、
   播放手势（亮度/音量/横滑快进/长按倍速 + HUD）、直播识别、弹幕（XML 拉取解析 + Canvas 渲染 + 开关）、
   iPad（宽屏多铺两列）、浅色确认、轻动效；另修：详情页按钮自己画（横竖居中）、

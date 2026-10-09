@@ -97,6 +97,19 @@ final class NodeRuntime: ObservableObject {
     func clearToast() { toastText = nil }
     func closeWebPanel() { webPanelURL = nil }
 
+    /// 手动打开源的配置中心（源自带的网页面板：登录夸克/百度等网盘就在里面）
+    /// 兜底用：万一源发来的 openInternalWebview 消息没送达（例如 App 刚被挂起过），用户也能自己点开
+    @discardableResult
+    func openWebPanel(path: String = "/website") -> Bool {
+        guard let base = serviceBase, let url = URL(string: base + path) else {
+            CatyLog.shared.warn("bridge", "还没有服务地址，打不开配置中心")
+            return false
+        }
+        CatyLog.shared.info("ui", "手动打开源配置中心：\(url.absoluteString)")
+        webPanelURL = url
+        return true
+    }
+
     /// iOS 上不能重启 Node（见文件头第 1 条）
     let canRelaunch = false
 

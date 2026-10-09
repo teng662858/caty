@@ -16,11 +16,13 @@ struct SourceManageView: View {
     @State private var input = ""
     @State private var errorText: String?
     @State private var busy = false
+    @State private var panelHint: String?
 
     var body: some View {
         NavigationStack {
             List {
                 statusSection
+                panelSection
                 importSection
                 listSection
             }
@@ -28,6 +30,30 @@ struct SourceManageView: View {
             .navigationTitle("Caty · 源")
             .navigationBarTitleDisplayMode(.inline)
             .onAppear { coordinator.refreshRecords() }
+        }
+    }
+
+    // MARK: - 源配置中心（登录网盘）
+
+    private var panelSection: some View {
+        Section("源配置中心") {
+            Button {
+                if !coordinator.runtime.openWebPanel() {
+                    panelHint = "运行时就绪后才能打开（先看「诊断」页）"
+                } else {
+                    panelHint = nil
+                }
+            } label: {
+                Label("打开配置中心（登录夸克/百度等网盘）", systemImage: "safari")
+            }
+            .disabled(coordinator.runtime.serviceBase == nil)
+
+            if let panelHint {
+                Text(panelHint).font(.footnote).foregroundStyle(.orange)
+            }
+            Text("网盘源必须先在配置中心登录对应网盘，播放时才拿得到直链。源自己也会在需要时弹这个面板。")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
         }
     }
 

@@ -48,6 +48,11 @@ final class BridgeServer {
     /// receive() 里 [weak self] 的回调全部落空，Node 的 /msg 汇报会被静默丢弃
     /// （真机实测过：bridge 在监听、端口正常，但永远等不到 serverStarted）。
     private var connections: [UUID: BridgeConnection] = [:]
+    /// 监听自愈：iOS 在 App 被挂起时会回收它的 socket —— 真机实测过
+    /// （源发 openInternalWebview 时连不上桥，报 ECONNREFUSED 127.0.0.1:62264）。
+    /// 每 10 秒自连一次自己，掉了就用**同一个端口**重建。
+    private var watchdog: DispatchSourceTimer?
+    private var rebinding = false
 
     private(set) var port: UInt16 = 0
 
@@ -73,6 +78,7 @@ final class BridgeServer {
                     let assigned = listener.port?.rawValue ?? 0
                     self.port = assigned
                     self.finishStart(.success(assigned))
+                    self.startWatchdog(port: assigned)
                 case .failed(let error):
                     self.finishStart(.failure(error))
                 default:
@@ -91,9 +97,87 @@ final class BridgeServer {
 
     func stop() {
         queue.async { [weak self] in
+            self?.watchdog?.cancel()
+            self?.watchdog = nil
             self?.listener?.cancel()
             self?.listener = nil
         }
+    }
+
+    // MARK: - 监听自愈（App 被挂起后 socket 会被系统回收）
+
+    private func startWatchdog(port: UInt16) {
+        guard port != 0 else { return }
+        watchdog?.cancel()
+        let timer = DispatchSource.makeTimerSource(queue: queue)
+        timer.schedule(deadline: .now() + 10, repeating: 10)
+        timer.setEventHandler { [weak self] in
+            guard let self, !self.rebinding else { return }
+            self.probeAlive(port) { alive in
+                if !alive { self.rebind(port: port) }
+            }
+        }
+        timer.resume()
+        watchdog = timer
+        CatyLog.shared.info("bridge", "桥的监听自愈已开启（每 10s 自检 127.0.0.1:\(port)）")
+    }
+
+    private func probeAlive(_ port: UInt16, completion: @escaping (Bool) -> Void) {
+        guard let endpointPort = NWEndpoint.Port(rawValue: port) else {
+            completion(true)
+            return
+        }
+        let connection = NWConnection(host: .ipv4(.loopback), port: endpointPort, using: .tcp)
+        var settled = false
+        let finish: (Bool) -> Void = { alive in
+            guard !settled else { return }
+            settled = true
+            connection.cancel()
+            completion(alive)
+        }
+        connection.stateUpdateHandler = { state in
+            switch state {
+            case .ready: finish(true)
+            case .failed, .cancelled: finish(false)
+            default: break
+            }
+        }
+        connection.start(queue: queue)
+        queue.asyncAfter(deadline: .now() + 2) { finish(false) }
+    }
+
+    private func rebind(port: UInt16) {
+        guard !rebinding, let endpointPort = NWEndpoint.Port(rawValue: port) else { return }
+        rebinding = true
+        CatyLog.shared.warn("bridge", "桥的监听已失效（App 挂起后 socket 被回收）→ 原地重绑 127.0.0.1:\(port)")
+
+        listener?.cancel()
+        listener = nil
+
+        do {
+            let parameters = NWParameters.tcp
+            parameters.allowLocalEndpointReuse = true
+            parameters.requiredLocalEndpoint = NWEndpoint.hostPort(host: .ipv4(.loopback), port: endpointPort)
+            let fresh = try NWListener(using: parameters)
+            fresh.newConnectionHandler = { [weak self] connection in
+                self?.accept(connection)
+            }
+            fresh.stateUpdateHandler = { state in
+                switch state {
+                case .ready:
+                    CatyLog.shared.warn("bridge", "桥已重新监听 127.0.0.1:\(port)")
+                case .failed(let error):
+                    CatyLog.shared.error("bridge", "桥重绑失败：\(error.localizedDescription)")
+                default:
+                    break
+                }
+            }
+            fresh.start(queue: queue)
+            listener = fresh
+        } catch {
+            CatyLog.shared.error("bridge", "桥重绑异常：\(error.localizedDescription)")
+        }
+        rebinding = false
     }
 
     private func finishStart(_ result: Result<UInt16, Error>) {

@@ -32,6 +32,9 @@ options:
 settings:
   base:
     SWIFT_VERSION: "5.0"                      # 不要用 Swift 6：严格并发会报一堆错
+    # 逐文件编译：batch 模式下 swift-frontend 崩了日志不报哪个文件，
+    # 单文件模式能直接点名（定位完可以去掉这一行）
+    SWIFT_COMPILATION_MODE: singlefile
     SWIFT_STRICT_CONCURRENCY: minimal
     IPHONEOS_DEPLOYMENT_TARGET: "17.0"
     TARGETED_DEVICE_FAMILY: "1,2"             # iPhone + iPad（iPad 上自动多铺两列）

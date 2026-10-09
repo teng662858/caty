@@ -71,31 +71,38 @@ struct HomeView: View {
     private var filterRows: some View {
         VStack(alignment: .leading, spacing: Theme.spacingS) {
             ForEach(currentFilters) { group in
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: Theme.spacingS) {
-                        Text(group.name)
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                        ForEach(group.options, id: .self) { option in
-                            Button {
-                                if selected[group.id] == option.value {
-                                    selected[group.id] = nil
-                                } else {
-                                    selected[group.id] = option.value
-                                }
-                                Task { await reload() }
-                            } label: {
-                                ChipLabel(text: option.name,
-                                          selected: selected[group.id] == option.value,
-                                          compact: true)
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                    .padding(.horizontal, Theme.padding)
-                }
+                filterRow(group)
             }
         }
+    }
+
+    private func filterRow(_ group: FilterGroup) -> some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: Theme.spacingS) {
+                Text(group.name)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                ForEach(group.options, id: \.self) { option in
+                    filterChip(group: group, option: option)
+                }
+            }
+            .padding(.horizontal, Theme.padding)
+        }
+    }
+
+    private func filterChip(group: FilterGroup, option: FilterOption) -> some View {
+        let isOn = selected[group.id] == option.value
+        return Button {
+            if isOn {
+                selected[group.id] = nil
+            } else {
+                selected[group.id] = option.value
+            }
+            Task { await reload() }
+        } label: {
+            ChipLabel(text: option.name, selected: isOn, compact: true)
+        }
+        .buttonStyle(.plain)
     }
 
     // MARK: - 源（左上角菜单）

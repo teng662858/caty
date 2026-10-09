@@ -79,17 +79,28 @@ final class RuntimeCoordinator: ObservableObject {
             }
             .store(in: &cancellables)
 
-        guard let source = store.activeSource() else {
+        let enabled = store.all().filter { $0.enabled }
+        guard !enabled.isEmpty else {
             phase = .idle
             lastMessage = "还没有导入源 → 先跑打桩源自检"
             CatyLog.shared.info("site", "未导入任何源，启动打桩 bundle")
             runtime.bootstrapStub()
             return
         }
-        await launch(source)
+
+        // 挨个试已启用的源：列表里只要有**一个**能用就启动它
+        // （否则一个坏源排在前面，会把后面能用的源全挡住）
+        for source in enabled {
+            if await launch(source) { return }
+        }
+        lastMessage = "已启用的源都取包失败 —— 已回退到打桩源；修好后在「源」页点「重试取包」"
+        CatyLog.shared.error("site", "所有已启用的源都取包失败，回退打桩源")
+        runtime.bootstrapStub()
     }
 
-    private func launch(_ source: SourceRecord) async {
+    /// 返回 true 表示这个源成功启动
+    @discardableResult
+    private func launch(_ source: SourceRecord) async -> Bool {
         activeSourceName = source.displayName
         phase = .checking
         lastMessage = nil
@@ -113,7 +124,7 @@ final class RuntimeCoordinator: ObservableObject {
                 store.upsert(record)
                 refreshRecords()
                 CatyLog.shared.error("site", "拒绝启动：\(lastMessage ?? "")")
-                return
+                return false
             }
 
             store.upsert(record)
@@ -128,6 +139,7 @@ final class RuntimeCoordinator: ObservableObject {
                 ? "缓存命中，未重新下载"
                 : "已下载并校验通过（\(result.bytes / 1024) KB）"
             CatyLog.shared.info("site", lastMessage ?? "")
+            return true
         } catch {
             phase = .failed
             let reason = error.localizedDescription
@@ -136,11 +148,9 @@ final class RuntimeCoordinator: ObservableObject {
             record.lastCheckedAt = Date()
             store.upsert(record)
             refreshRecords()
-            CatyLog.shared.error("site", "取包失败：\(reason)")
-
-            // 回退到打桩源：否则 Node 一次都不启动，整个 App 是死的（用户会以为坏了）
-            lastMessage = "源取包失败：\(reason) —— 已回退到打桩源；修好后在「源」页点「重试」"
-            runtime.bootstrapStub()
+            CatyLog.shared.error("site", "\(source.displayName) 取包失败：\(reason)")
+            lastMessage = "\(source.displayName) 取包失败：\(reason)"
+            return false
         }
     }
 

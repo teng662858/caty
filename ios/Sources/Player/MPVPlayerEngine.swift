@@ -406,17 +406,19 @@ extension MPVPlayerEngine {
 
     /// 截图（mpv 自己的截图命令，输出到临时目录），返回 PNG 路径
     func screenshot() async -> String? {
-        guard let handle = handle else { return nil }
+        guard let handle = mpv else { return nil }
         let path = NSTemporaryDirectory() + "caty-shot-" + String(Int(Date().timeIntervalSince1970)) + ".png"
-        await withCheckedContinuation { continuation in
-            DispatchQueue.global(qos: .userInitiated).async {
-                var args: [String?] = ["screenshot-to-file", path, "video", nil]
-                var cargs: [UnsafePointer<CChar>?] = args.map { $0.map { UnsafePointer(strdup($0)) } }
-                let code = mpv_command(handle, &cargs)
-                for pointer in cargs where pointer != nil { free(UnsafeMutablePointer(mutating: pointer!)) }
-                continuation.resume(returning: code >= 0 ? path : nil)
+        // mpv_command 是阻塞的（要等它把这一帧写出来）→ 放后台线程，别卡 UI
+        let ok = await Task.detached(priority: .userInitiated) { () -> Bool in
+            var args: [String?] = ["screenshot-to-file", path, "video", nil]
+            var cargs: [UnsafePointer<CChar>?] = args.map { $0.map { UnsafePointer(strdup($0)) } }
+            let code = mpv_command(handle, &cargs)
+            for pointer in cargs where pointer != nil {
+                free(UnsafeMutablePointer(mutating: pointer!))
             }
-        }.flatMap { $0 }
+            return code >= 0
+        }.value
+        return ok ? path : nil
     }
 }
 

@@ -99,9 +99,9 @@ struct SearchView: View {
 
     @ViewBuilder
     private var resultSections: some View {
-        ForEach(siteKeys, id: \.self) { key in
-            Section(sectionTitle(key)) {
-                ForEach(bySite[key] ?? []) { hit in
+        ForEach(groups) { group in
+            Section(header: Text(group.title)) {
+                ForEach(group.hits) { hit in
                     NavigationLink(value: hit) {
                         row(hit)
                     }
@@ -134,26 +134,28 @@ struct SearchView: View {
         }
     }
 
-    // MARK: - 分组
+    // MARK: - 分组（预先算好，别在 ViewBuilder 里做字典查找）
 
-    private var bySite: [String: [AggregatorService.Hit]] {
-        Dictionary(grouping: hits, by: { $0.site.key })
+    private struct SiteGroup: Identifiable {
+        let id: String
+        let title: String
+        let hits: [AggregatorService.Hit]
     }
 
-    /// 命中数从多到少的站点顺序（显式写法：链式 sorted 闭包会让类型检查器爆炸）
-    private var siteKeys: [String] {
-        var pairs: [(key: String, count: Int)] = []
-        pairs.reserveCapacity(bySite.count)
-        for (key, list) in bySite {
-            pairs.append((key: key, count: list.count))
+    private var groups: [SiteGroup] {
+        var buckets: [String: [AggregatorService.Hit]] = [:]
+        for hit in hits {
+            buckets[hit.site.key, default: []].append(hit)
         }
-        pairs.sort { $0.count > $1.count }
-        return pairs.map { $0.key }
-    }
-
-    private func sectionTitle(_ key: String) -> String {
-        let count = bySite[key]?.count ?? 0
-        return siteName(key) + "（" + String(count) + "）"
+        var result: [SiteGroup] = []
+        result.reserveCapacity(buckets.count)
+        for (key, list) in buckets {
+            result.append(SiteGroup(id: key,
+                                    title: siteName(key) + "（" + String(list.count) + "）",
+                                    hits: list))
+        }
+        result.sort { $0.hits.count > $1.hits.count }
+        return result
     }
 
     private func siteName(_ key: String) -> String {

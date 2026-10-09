@@ -1,31 +1,26 @@
 # 没有 Mac 也能装到手机 —— GitHub 编译 + Windows 签名
 
-> ## ⚠️ 当前状态（2026-10-09，先读这段）
+> ## ⚠️ 当前状态（2026-10-09）
 >
-> **第 1、2、3 步（建仓库、推代码、建 CI）我这边已经全部做完了：**
-> 仓库 `https://github.com/teng662858/caty`（私有），51 个文件已推上去，
-> CI 文件 `.github/workflows/build-ipa.yml` 已就位（通过网页界面创建，原因见下）。
+> **通了！** 仓库 `https://github.com/teng662858/caty`（已按要求改为**公开**，Actions 免费不限量）
+> → 推送即自动编译 → 未签名 ipa → Sideloadly 装进 iPhone。**App 已在真机上打开、三个 tab 正常。**
 >
-> **现在唯一卡住的是 GitHub 计费**：
-> 你的账号（GitHub Free）本月已产生 $21.15 用量（主要来自 `LumeBox` 仓库），
-> **免费额度用完**，而 macOS 机器需要"支出限额 > $0" → 所以任务被拒：
-> `The job was not started because recent account payments have failed or your spending limit needs to be increased.`
-> **这不是代码问题。** 三条出路（详见我给的项目结论）：
-> **A. 仓库改为公开** → 公开仓库的 Actions 完全免费（含 macOS），立刻能编译；
-> **B. 加支付方式 + 把支出限额设为 > $0** → 保持私有，超出免费额度后约 $0.08/分钟；
-> **C. 换 Codemagic**（免费 500 分钟/月 macOS）→ 保持私有，但要注册新账号。
+> 第一次编译在真机上暴露了一个 bug（`/msg` 桥的连接被提前释放 → 收不到 `serverStarted`），已修复；
+> **最新 ipa 在 `dist/Caty-unsigned.ipa`**，用 Sideloadly 再装一次即可。
 >
-> 另外：`gh` 令牌缺少 **workflow 权限**，所以 CI 文件不能走 `git push`（会被 GitHub 拒绝），
-> 只能通过网页界面创建/修改。以后要让改动走 git，需要先执行一次
-> `gh auth refresh -h github.com -s workflow`（浏览器里点一次授权）。
+> 顺带说明两个 GitHub 限制（已绕过，记录备查）：
+> ① `gh` 令牌没有 **workflow 权限** → CI 文件不能走 `git push`，只能在网页界面改
+> （要改回 git 管理就先执行 `gh auth refresh -h github.com -s workflow`）；
+> ② 私有仓库 + macOS 机器需要"支出限额"，账号免费额度已用尽 → 所以改成了公开仓库。
+> 如果以后想改回私有，Actions 会再次被计费拦住（需加支付方式或等到下月额度重置）。
 
 > **这条路是什么**：编译必须在 macOS 上做，而你没 Mac。
 > 所以我们借用 **GitHub 免费提供的 macOS 机器**编译出**未签名 ipa**，
 > 再在 **Windows 上用 Sideloadly** 拿你自己的 Apple ID 签名装进 iPhone。
 >
-> **全程免费**（前提是 Actions 有可用额度，见上面的状态说明），不需要开发者账号（$99 那个不用买）。
+> **全程免费**，不需要开发者账号（$99 那个不用买）。
 >
-> 代价要说清楚：① 每次改代码要"推送 → 等 5–8 分钟 → 下载 ipa → 重新签名安装"，
+> 代价要说清楚：① 每次改代码要"推送 → 等 2–8 分钟 → 下载 ipa → 重新签名安装"，
 > 比有 Mac 慢得多；② 免费账号签的 App **7 天过期**，到期重跑一次签名即可（数据不丢）。
 
 ---

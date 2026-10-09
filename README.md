@@ -190,17 +190,21 @@ Swift 侧实现 `/msg` 桥收 `serverStarted` → GET `/config` 打印站点列�
 - [x] **零 Mac 通路已搭好**：`ios/project.yml`（XcodeGen 生成工程）+ `.github/workflows/ios.yml`
       （借 GitHub 的 macOS 机器编译出**未签名 ipa**，自动下载 NodeMobile 并校验 sha256）
       + [docs/09-没有Mac也能装到手机.md](docs/09-没有Mac也能装到手机.md)（Windows 上用 Sideloadly 签名安装）
+- [x] **零 Mac 通路已打通并跑出第一版 ipa** 🎉：仓库 → GitHub macOS runner 编译 → 未签名 ipa →
+      Windows 上用 Sideloadly 装进 iPhone。**App 已在真机上跑起来**（三 tab 正常、bridge 监听、编译缓存路径正确）
+- [x] **首次真机联调**：发现并修复 `/msg` 桥的连接生命周期 bug
+      （`BridgeConnection` 临时对象被提前释放 → Node 的 `serverStarted` 汇报被静默丢弃 → 状态卡在「启动中」）；
+      同时补了桥与 Node 线程的诊断日志
 - [x] **桌面预演一次通过**：`node tools/host/p2-selftest.mjs` → `✓ P2 链路自检通过`
       （同一份 `bootstrap.js` + 打桩 bundle 跑通 `serverStarted → /config → 站点映射 → 列表/详情/取播放地址`）
 
 **待办（按顺序）**
 
-- [ ] **你**：按 [docs/09-没有Mac也能装到手机.md](docs/09-没有Mac也能装到手机.md) 把 App 装进手机
-      （**不需要 Mac**：注册 GitHub → 推代码 → 跑 Actions → 下载 ipa → Sideloadly 用你的 Apple ID 签名）
-- [ ] **你**：装好后验证（M1/D2 闸门）：诊断页 🟢 已就绪 + `v24.20.0` + `serverStarted`，把日志发我
+- [ ] **你**：把 `dist/Caty-unsigned.ipa`（含桥修复的最新版）用 Sideloadly 重装一次 →
+      看「诊断」页是否变成 🟢 **已就绪** + `Node v24.20.0` + `serverStarted` 地址
+- [ ] **你**：把「诊断」页日志（点「复制日志（已脱敏）」）发我 —— 有它我就能继续往下推
 - [ ] **你**（推荐，5 分钟）：抓一次真源响应（D0）
       `node tools/host/node-host.mjs '<你的订阅地址>' --run --probe-routes`
       → 产出 `fixtures/host/`，我据此写 `docs/contract-notes.md`（P4 的 endpoint 约定以它为准）
-- [ ] **我**：P5 代码包（按 UI 规格逐屏 + 搜索/收藏/历史/设置 + GRDB 落库）——等你的 D2/D3 结果再动手，
-      不在未验证的运行时上堆界面
-- [ ] **可选**：真正有 Mac 时走 `docs/08-P2操作卡.md` 那条路（同样的代码，编译安装更快）
+- [ ] **我**：P5 代码包（按 UI 规格逐屏 + 搜索/收藏/历史/设置 + GRDB 落库）——真机链路确认后开工
+- [ ] **我**：清理仓库里那个误建的 `.github/workflows/ios.yml/ios.yml`（无害）

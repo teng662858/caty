@@ -1,0 +1,114 @@
+# 在 GitHub 的 macOS 机器上编译出**未签名 ipa**（你不需要有 Mac）
+#
+# 流程：推送代码 / 手动触发 → 下载 NodeMobile（带 sha256 校验）→ XcodeGen 生成工程
+#       → xcodebuild 编译（CODE_SIGNING_ALLOWED=NO）→ 打包成 ipa → 作为 Artifact 供下载
+#
+# 产物在 Actions 运行页最下方的 "Artifacts" 区（Caty-unsigned-ipa.zip，解压即 .ipa），
+# 然后用 Windows 上的 Sideloadly 用你自己的 Apple ID 签名安装（见 docs/09-没有Mac也能装到手机.md）
+
+name: iOS 未签名 ipa
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build-unsigned-ipa:
+    runs-on: macos-15
+    timeout-minutes: 30
+
+    env:
+      # digidem/nodejs-mobile v24.20.0-0（lite）—— 已实测：Node v24.20.0 / 含 polywasm / 动态 framework
+      NODEMOBILE_URL: https://github.com/digidem/nodejs-mobile/releases/download/v24.20.0-0/nodejs-mobile-ios-lite-24.20.0-0.zip
+      NODEMOBILE_SHA256: 991283d8579eee225142da2bf4a897dd7d831e8b5a496a1f247fca665bc1d705
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 环境信息（Xcode / Swift）
+        run: |
+          xcodebuild -version
+          swift --version
+
+      - name: 安装 XcodeGen
+        run: brew install xcodegen
+
+      - name: 下载 NodeMobile 并校验 sha256
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/nm ios/Frameworks
+          curl -L --fail --retry 3 -o /tmp/nm.zip "$NODEMOBILE_URL"
+          echo "$NODEMOBILE_SHA256  /tmp/nm.zip" | shasum -a 256 -c -
+          unzip -q /tmp/nm.zip -d /tmp/nm
+          rm -rf ios/Frameworks/NodeMobile.xcframework
+          cp -R /tmp/nm/NodeMobile.xcframework ios/Frameworks/
+          echo "== 框架信息 =="
+          ls ios/Frameworks/NodeMobile.xcframework
+          /usr/libexec/PlistBuddy -c 'Print :MinimumOSVersion' \
+            ios/Frameworks/NodeMobile.xcframework/ios-arm64/NodeMobile.framework/Info.plist
+          echo "device 二进制大小:"
+          ls -la ios/Frameworks/NodeMobile.xcframework/ios-arm64/NodeMobile.framework/NodeMobile
+
+      - name: 生成 Xcode 工程
+        run: |
+          set -euo pipefail
+          cd ios
+          xcodegen generate
+          ls -la
+
+      - name: 编译（不签名）
+        id: build
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          cd ios
+          xcodebuild \
+            -project Caty.xcodeproj \
+            -target Caty \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            build 2>&1 | tee xcodebuild.log | tail -60
+
+      - name: 打印编译错误（失败时）
+        if: steps.build.outcome == 'failure'
+        run: grep -n -E "error:|fatal error|❌" ios/xcodebuild.log | head -80 || true
+
+      - name: 打包成 ipa（成功时）
+        if: steps.build.outcome == 'success'
+        run: |
+          set -euo pipefail
+          cd ios
+          APP=$(find build -maxdepth 6 -name "Caty.app" -type d | head -1)
+          if [ -z "$APP" ]; then
+            echo "找不到 Caty.app，看看 build 目录里有什么："
+            find build -maxdepth 6 -name "*.app" -type d || true
+            exit 1
+          fi
+          echo "APP=$APP"
+          echo "== Caty.app 内容 =="
+          ls "$APP"
+          echo "== 嵌入的 framework =="
+          ls "$APP/Frameworks" || echo "（没有 Frameworks 目录 —— 说明框架没嵌进去，把这段贴给我）"
+          rm -rf Payload Caty-unsigned.ipa
+          mkdir -p Payload
+          cp -R "$APP" Payload/
+          zip -qry Caty-unsigned.ipa Payload
+          ls -la Caty-unsigned.ipa
+
+      - name: 上传 ipa
+        if: steps.build.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Caty-unsigned-ipa
+          path: ios/Caty-unsigned.ipa
+          if-no-files-found: error
+
+      - name: 上传编译日志（总是上传，方便把报错贴给我）
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xcodebuild-log
+          path: ios/xcodebuild.log
+          if-no-files-found: ignore

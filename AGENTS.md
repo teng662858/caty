@@ -90,22 +90,35 @@ PeekPili / 魔力云播 / 蚂蚁影视 共用同一套格式），App 下载 →
     另：iOS 上要按机型设 `--max-old-space-size`（App 侧按物理内存 1/3、封顶 1.5 GB 自动算）。
 14. **没有 Mac 时的编译通路（当前主路径）**：`.github/workflows/build-ipa.yml` 借 GitHub 的 macOS runner →
     自动下载 NodeMobile（校验 sha256）→ `xcodegen generate`（工程描述在 `ios/project.yml`）→
-    `xcodebuild … CODE_SIGNING_ALLOWED=NO` → 产出 `Caty-unsigned.ipa` → Windows 上用 **Sideloadly** 签名装机。
+    `xcodebuild -scheme Caty -derivedDataPath build … CODE_SIGNING_ALLOWED=NO` → 产出 `Caty-unsigned.ipa`
+    → Windows 上用 **Sideloadly** 签名装机。**已跑通**：真机装上、Node 跑起来了。
     **不要把 `NodeMobile.xcframework` 或 `.xcodeproj` 提交进仓库**（100 MB+、国内推送极慢；`.gitignore` 已挡）。
-    本机可用 `gh`（已装）建私有仓库并推送；`tools/make-ios-package.mjs` 负责重新打交付包。
+    ⚠️ 两个已踩过的坑：① `-derivedDataPath` 必须配 `-scheme`，不能用 `-target`
+    （报 `The flag -scheme … is required when specifying -derivedDataPath`）；
+    ② 不要给编译步骤加 `continue-on-error: true` —— 它会把失败伪装成"成功"，让人误判。
 15. **仓库与两个 GitHub 限制（2026-10-09 实测，别踩第二次）**：
-    - 仓库：`https://github.com/teng662858/caty`（**私有**，用户名就是用户的 GitHub 账号）。
+    - 仓库：`https://github.com/teng662858/caty`（**已公开 PUBLIC** —— 用户选择方案 A，
+      目的是让 Actions 免费跑 macOS；私有仓库会因免费额度用尽被计费拦截）。
     - **令牌缺 `workflow` 权限** → `git push` 遇到 `.github/workflows/**` 一律被拒
       （`refusing to allow an OAuth App to create or update workflow … without workflow scope`），
       Contents API 也不行（返回 404 掩码）。→ 该目录已加进 `.gitignore`；改 CI 只能
       **用 ZCode 内置浏览器（已登录 GitHub）在网页界面创建/编辑**，或先让用户执行一次
       `gh auth refresh -h github.com -s workflow`。
-    - **Actions 计费被拦**（`The job was not started because recent account payments have failed or
-      your spending limit needs to be increased`）：用户账号是 GitHub Free，本月已产生 $21.15 用量
-      （主要来自 `LumeBox` 仓库）→ 免费额度用尽 + 支出限额 $0 → 私有仓库的 macOS 任务被拒。
-      出路：**① 仓库改公开（公开仓库 Actions 免费，最快）** ② 加支付方式并把支出限额设 >$0
-      ③ 换 Codemagic（免费 500 分钟/月 macOS，保持私有）。**这一步需要用户决定，不要自作主张改仓库可见性。**
-    - 遗留小尾巴：网页建文件时误建了 `.github/workflows/ios.yml/ios.yml`（多一层目录），无害，得空清理。
+    - **网页新建文件的坑**：`/new/<分支>/<完整路径>` 会把最后一段当**目录**，于是建出
+      `.github/workflows/ios.yml/ios.yml`（多一层，GitHub 认不出是工作流）。
+      要建文件请用目录形式 `/new/main/.github/workflows`，再在「File name」里只填文件名。
+    - 遗留小尾巴：那个误建的 `.github/workflows/ios.yml/ios.yml` 还在，无害，得空清理。
+16. **spider 接口 = POST + 三段式**（2026-10-09 三源实测，**推翻了早期的 `GET ?ac=` 猜测**）：
+    `POST /spider/<key>/3/<op>`，参数走 JSON body：
+    `home {}` → `{class,filters}`；`category {tid,pg}` → `{page,pagecount,list}`；
+    `detail {id}`（**单数 id**，用 `ids` 返回空）；`search {wd}`（站点没实现则整条路由 404）；
+    `play {flag,id}` → `{url,header,parse}`，失败时 **500 + 可读 message**（如"还没有配置夸克 Cookie…"）。
+    两段式与任何 GET 打到这些路径都是 fastify 404；站点目录仍走 `GET /config`。详见 `docs/contract-notes.md`。
+    源还会通过桥主动推消息（实测 `toast` / `saveProfile` / `queryProfile` / `openInternalWebview`）——
+    `toast` 就是它想给用户看的提示，宿主应当展示。
+17. **iOS 挂起 App 会回收监听 socket**（真机实测：启动 85 秒后宿主请求报"无法连接服务器"，
+    而 `node_start` 并未返回）→ `bootstrap.js` 已加"监听自愈"：每 10 秒自连一次自己，
+    掉线就在**同一端口**重建 server 并重新回报 `serverStarted`（换端口会让宿主手里的旧地址失效）。
 
 ## 铁律（不可违反）
 
@@ -127,20 +140,20 @@ PeekPili / 魔力云播 / 蚂蚁影视 共用同一套格式），App 下载 →
 **零 Mac 编译通路**（`.github/workflows/ios.yml` + `ios/project.yml` + `docs/09`）、
 P2/P4 链路桌面预演通过（`tools/host/p2-selftest.mjs`）。
 
-**下一步：等用户拍板（只有一件事需要他决定）**
+**下一步：等用户重装并回传日志**
 
-**GitHub Actions 被计费拦住了**（见事实 15）。等他选：
-- **A. 仓库改公开** → 我立刻改 + 重跑 CI → 拿到 ipa（最快；之后可随时改回私有）
-- **B. 加支付方式 + 支出限额设 >$0** → 保持私有；需要他自己在浏览器里填卡
-- **C. 换 Codemagic**（免费 500 分钟/月 macOS）→ 保持私有；需要他注册新账号，我配 `codemagic.yaml`
+1. 用户重装 `dist/Caty-unsigned.ipa`（含 POST 契约 + 监听自愈 + 桥修复）→
+   看「诊断」是否 🟢 就绪，然后**导入真源**（用户已给三个地址；注意：地址带凭据，**不要写进任何文件**）
+   → 首页应出现真实站点与内容。
+2. 需要他回传：诊断页日志（`复制日志`，自动脱敏）、以及**真源首屏耗时 / 内存 / 是否崩**（M1 闸门数据）。
+3. 他给的源里 **播放需要先在源的配置中心登录网盘**（夸克等），play 会返回
+   `500 还没有配置夸克 Cookie…` → 这是预期行为，不是 bug；P5 要做 WebView 配置中心入口。
 
-他选定后我再动。**在他明确同意前，不要改动仓库可见性。**
+**已经做完、不用重做的**：代码推到 `teng662858/caty`、CI 跑通并产出可用 ipa、真机跑起来了（Node v24.20.0、
+webAssembly/fetch 可用、0.08s）、D0 实测并写进 `docs/contract-notes.md`、
+客户端已按实测改成 POST 三段式。
 
-**已经做完、不用重做的**：代码全部推到 `teng662858/caty`（51 个文件）、CI 文件已就位并成功触发过一次、
-NodeMobile 产物已核验（Node v24.20.0 + polywasm）、P2/P3/P4 三包代码齐全。
-
-**还欠的活**：P5 代码包（按 `docs/02-ui-spec.md` 逐屏 + 搜索/收藏/历史/设置 + GRDB 落库）。
-建议等真机日志回来再动手 —— 不在未验证的运行时上堆界面。
+**还欠的活**：P5 代码包（按 `docs/02-ui-spec.md` 逐屏 + 搜索/收藏/历史/设置 + GRDB 落库 + toast 展示 + 配置中心 WebView）。
 
 ## 工具（均已验证，可直接用）
 

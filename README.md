@@ -200,11 +200,9 @@ Swift 侧实现 `/msg` 桥收 `serverStarted` → GET `/config` 打印站点列�
 
 **待办（按顺序）**
 
-- [ ] **你**：把 `dist/Caty-unsigned.ipa`（含桥修复的最新版）用 Sideloadly 重装一次 →
-      看「诊断」页是否变成 🟢 **已就绪** + `Node v24.20.0` + `serverStarted` 地址
-- [ ] **你**：把「诊断」页日志（点「复制日志（已脱敏）」）发我 —— 有它我就能继续往下推
-- [ ] **你**（推荐，5 分钟）：抓一次真源响应（D0）
-      `node tools/host/node-host.mjs '<你的订阅地址>' --run --probe-routes`
-      → 产出 `fixtures/host/`，我据此写 `docs/contract-notes.md`（P4 的 endpoint 约定以它为准）
-- [ ] **我**：P5 代码包（按 UI 规格逐屏 + 搜索/收藏/历史/设置 + GRDB 落库）——真机链路确认后开工
-- [ ] **我**：清理仓库里那个误建的 `.github/workflows/ios.yml/ios.yml`（无害）
+- [ ] **你**：把 `dist/Caty-unsigned.ipa`（含 POST 契约 + 监听自愈 + 桥修复的最新版）用 Sideloadly 重装 →
+      诊断页应 🟢 已就绪；然后到「源」导入你的订阅地址 → 首页应出现**真实站点与内容**
+- [ ] **你**：回传诊断页日志（点「复制日志（已脱敏）」）+ 真源**首屏耗时/内存/是否崩**
+- [ ] **注意**：真源**播放前要先去源的配置中心登录网盘**（夸克等），否则 play 会返回
+      `500 还没有配置夸克 Cookie…` —— 这是预期行为，P5 会做 WebView 配置中心入口
+- [ ] **我**：P5 代码包（按 UI 规格逐屏 + 搜索/收藏/历史/设置 + GRDB 落库 + toast 展示 + 配置中心 WebView）

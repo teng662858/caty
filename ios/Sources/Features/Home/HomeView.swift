@@ -28,9 +28,11 @@ struct HomeView: View {
     @State private var loading = false
     @State private var errorText: String?
     @State private var showSourcePicker = false
+    /// 站点 → 它的分类/筛选项（问过一次就存下来；切回同一个站点时只发 category 请求）
+    @State private var siteMenus: [String: SiteMenus] = [:]
 
     /// 系统站点（配置中心/我的网盘/豆瓣首页这类）不作为默认站点，但保留在菜单里
-    private let systemKeys: Set<String> = ["douban", "gengxin", "baseset", "mypan"]
+    private var systemKeys: Set<String> { RuntimeCoordinator.systemSiteKeys }
 
     private var currentSite: SiteInfo? {
         guard let siteId else { return nil }
@@ -186,7 +188,10 @@ struct HomeView: View {
         if coordinator.sites.isEmpty {
             runtimeState
         } else if loading && items.isEmpty {
-            PosterSkeletonGrid(columns: library.settings.gridColumns)
+            VStack(spacing: Theme.spacingM) {
+                loadingBanner
+                PosterSkeletonGrid(columns: library.settings.gridColumns)
+            }
         } else if let errorText, items.isEmpty {
             StateView(kind: .failure("取不到内容", hint: "源返回：\(errorText)")) {
                 Task { await reload() }
@@ -194,8 +199,24 @@ struct HomeView: View {
         } else if items.isEmpty {
             StateView(kind: .empty("这个分类没有内容", hint: "换个分类或换个源试试"))
         } else {
-            grid
+            VStack(alignment: .leading, spacing: Theme.spacingS) {
+                // 换源时**不清空旧列表**，只在上面挂一条"正在载入"——不然会白屏一下，看着像卡死
+                if loading { loadingBanner }
+                grid
+            }
         }
+    }
+
+    /// "正在载入某某站点…"（换源/换分类时的即时反馈）
+    private var loadingBanner: some View {
+        HStack(spacing: 8) {
+            ProgressView().controlSize(.small)
+            Text("正在载入 \(currentSite?.name ?? "站点")…")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, Theme.padding)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var runtimeState: some View {
@@ -241,17 +262,24 @@ struct HomeView: View {
         guard let site = currentSite, let client = coordinator.client, !loading else { return }
         loading = true
         defer { loading = false }
-        items = []
         categories = []
         categoryFilters = [:]
         selected = [:]
         errorText = nil
+        let previousItems = items          // 换源失败时留着旧内容，别白屏
         do {
-            let home = try await client.home(site: site)
-            categories = home.categories
-            categoryFilters = home.filters
-            items = home.items
-            tid = home.categories.first?.id
+            if let cached = siteMenus[site.id] {
+                // 这个站点问过一次了：分类/筛选项直接用缓存，只发一个 category 请求
+                categories = cached.categories
+                categoryFilters = cached.filters
+            } else {
+                let home = try await client.home(site: site)
+                categories = home.categories
+                categoryFilters = home.filters
+                siteMenus[site.id] = SiteMenus(categories: home.categories, filters: home.filters)
+                CatyLog.shared.info("site", "\(site.name)：\(home.categories.count) 个分类（已缓存）")
+            }
+            tid = categories.first?.id
             page = 1
             pageCount = 1
             if let first = tid {
@@ -259,9 +287,12 @@ struct HomeView: View {
                 items = result.items
                 page = result.page
                 pageCount = result.pageCount
+            } else {
+                items = []
             }
             if items.isEmpty { errorText = "这个站点没有返回内容" }
         } catch {
+            items = previousItems
             errorText = error.localizedDescription
         }
     }
@@ -271,7 +302,7 @@ struct HomeView: View {
         guard let site = currentSite, let client = coordinator.client, !loading else { return }
         loading = true
         defer { loading = false }
-        items = []
+        let previousItems = items
         page = 1
         errorText = nil
         do {
@@ -281,6 +312,7 @@ struct HomeView: View {
             pageCount = result.pageCount
             if items.isEmpty { errorText = "这个筛选组合没有内容" }
         } catch {
+            items = previousItems
             errorText = error.localizedDescription
         }
     }
@@ -387,3 +419,9 @@ private struct SourcePickerSheet: View {
     }
 }
 
+
+/// 一个站点问过一次的"分类 + 筛选项"（换源时少一次往返，切换更快）
+private struct SiteMenus {
+    var categories: [Category]
+    var filters: [String: [FilterGroup]]
+}

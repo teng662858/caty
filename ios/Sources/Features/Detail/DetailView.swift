@@ -141,6 +141,8 @@ struct DetailView: View {
 
     @ViewBuilder
     private var actions: some View {
+        // ⚠️ 两个按钮**等宽平分**，内容各自居中（用户反馈"继续观看的字不在胶囊中间"）：
+        // 以前按钮按内容自适应宽度 + 末尾有个 Spacer，宽的那个看着就像"文字偏在一边"。
         HStack(spacing: Theme.spacingS) {
             Button {
                 library.toggleFavorite(item)
@@ -149,6 +151,7 @@ struct DetailView: View {
                       systemImage: library.isFavorite(item) ? "heart.fill" : "heart")
                     .font(.subheadline)
                     .lineLimit(1)
+                    .frame(maxWidth: .infinity)
             }
             .buttonStyle(.bordered)
             .tint(library.isFavorite(item) ? .pink : Theme.accent)
@@ -161,9 +164,22 @@ struct DetailView: View {
                     Label("继续观看 \(record.episodeName)", systemImage: "play.circle")
                         .font(.subheadline)
                         .lineLimit(1)
+                        .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(Theme.accent)
+            } else {
+                Button {
+                    present(index: 0)
+                } label: {
+                    Label("开始播放", systemImage: "play.circle")
+                        .font(.subheadline)
+                        .lineLimit(1)
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(Theme.accent)
+                .disabled(episodes.isEmpty)
             }
 
             if item.isFolder {
@@ -171,11 +187,10 @@ struct DetailView: View {
                     Label("进入目录", systemImage: "folder")
                         .font(.subheadline)
                         .lineLimit(1)
+                        .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.bordered)
             }
-
-            Spacer(minLength: 0)
         }
         .padding(.top, 2)
     }

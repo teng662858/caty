@@ -28,6 +28,8 @@ struct PlayerView: View {
     /// 跟手位移：下滑关闭 / 左边缘返回各一个（用于拖的时候页面跟着动）
     @State private var dragY: CGFloat = 0
     @State private var dragX: CGFloat = 0
+    /// 全屏（横屏）播放
+    @State private var showFullscreen = false
 
     private let ticker = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
@@ -75,6 +77,15 @@ struct PlayerView: View {
         .offset(y: max(0, dragY))
         .offset(x: max(0, dragX))
         .simultaneousGesture(backSwipeGesture)
+        .fullScreenCover(isPresented: $showFullscreen) {
+            FullscreenPlayerView(engine: engine,
+                                 episodes: episodes,
+                                 currentIndex: index,
+                                 rate: rate,
+                                 onSelectEpisode: { switchTo($0) },
+                                 onRate: { setRate($0) },
+                                 onClose: { showFullscreen = false })
+        }
         .task { await resolve() }
         .onDisappear {
             saveProgress(force: true)
@@ -145,10 +156,38 @@ struct PlayerView: View {
     private var videoArea: some View {
         ZStack {
             Color.black
-            VideoPlayer(player: engine.player)
+            // 全屏弹出期间这里留黑底：同一时刻只允许一个 VideoPlayer 存在，
+            // 否则两个画面会抢同一个 AVPlayer 的渲染层
+            if !showFullscreen {
+                VideoPlayer(player: engine.player)
+            } else {
+                Button {
+                    showFullscreen = false
+                } label: {
+                    Label("回到小窗", systemImage: "arrow.down.right.and.arrow.up.left")
+                        .font(.footnote)
+                        .foregroundStyle(.white.opacity(0.8))
+                }
+                .buttonStyle(.plain)
+            }
         }
         .aspectRatio(16.0 / 9.0, contentMode: .fit)
         .frame(maxWidth: .infinity)
+        .overlay(alignment: .bottomTrailing) {
+            if !showFullscreen, engine.currentURL != nil {
+                Button {
+                    showFullscreen = true
+                } label: {
+                    Image(systemName: "arrow.up.left.and.arrow.down.right")
+                        .font(.footnote)
+                        .padding(8)
+                        .background(.black.opacity(0.45), in: Circle())
+                        .foregroundStyle(.white)
+                }
+                .buttonStyle(.plain)
+                .padding(8)
+            }
+        }
         .gesture(dismissDragGesture)
     }
 
@@ -238,6 +277,13 @@ struct PlayerView: View {
                     .frame(height: 44)
                     .padding(.horizontal, 4)
             }
+
+            Button { showFullscreen = true } label: {
+                Image(systemName: "arrow.up.left.and.arrow.down.right")
+                    .font(.title3)
+                    .frame(width: 44, height: 44)
+            }
+            .disabled(engine.currentURL == nil)
         }
         .buttonStyle(.plain)
         .foregroundStyle(Theme.accent)

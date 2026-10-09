@@ -57,6 +57,11 @@ final class RuntimeCoordinator: ObservableObject {
     /// sourceId → 该源的站点目录（切源时不必重新拉）
     private var sitesBySource: [String: [SiteInfo]] = [:]
     private var sourcesById: [String: SourceRecord] = [:]
+    /// 后台预热（提前把站点 init 好，切源时才不卡）
+    private var warmupTask: Task<Void, Never>?
+
+    /// 系统站点（配置中心/我的网盘/豆瓣首页这类）：不给它们做预热，也不当默认站点
+    static let systemSiteKeys: Set<String> = ["douban", "gengxin", "baseset", "mypan"]
 
     init() {
         // 嵌套的 ObservableObject 不会自动把变化传给外层（runtime 的 @Published 不会刷新观察本类的界面），
@@ -225,6 +230,40 @@ final class RuntimeCoordinator: ObservableObject {
         } else {
             lastMessage = "共 \(sites.count) 个站点，来自 \(runningSourceIds.count) 个源"
         }
+        warmUpSites()
+    }
+
+    // MARK: - 后台预热（用户反馈"切换源的时候好卡"）
+
+    /// 站点第一次被打开时要先 `init`（源在这一步解析自己的上游域名，可能几百毫秒到几秒）——
+    /// 提前在后台把它做掉，用户点站点时就是直接出内容。
+    /// 只预热前 12 个非系统站点、并发 2：够覆盖最常切的那几个，又不会一开 App 就打出去几十个请求。
+    private func warmUpSites() {
+        warmupTask?.cancel()
+        guard let client else { return }
+        let targets = Array(sites
+            .filter { !Self.systemSiteKeys.contains($0.key) }
+            .prefix(12))
+        guard !targets.isEmpty else { return }
+        CatyLog.shared.info("site", "后台预热 \(targets.count) 个站点（切源不再等 init）")
+        warmupTask = Task {
+            await withTaskGroup(of: Void.self) { group in
+                var running = 0
+                for site in targets {
+                    if Task.isCancelled { return }
+                    if running >= 2 {
+                        await group.next()
+                        running -= 1
+                    }
+                    group.addTask { [client] in
+                        await client.initSite(site)
+                    }
+                    running += 1
+                }
+                await group.waitForAll()
+            }
+            CatyLog.shared.info("site", "后台预热完成")
+        }
     }
 
     // MARK: - 开关 / 重试（运行期即时生效，不用重启 App）
@@ -380,6 +419,17 @@ final class RuntimeCoordinator: ObservableObject {
         store.remove(id: id)
         refreshRecords()
         sites = records.compactMap { sitesBySource[$0.id] }.flatMap { $0 }
+    }
+
+    /// 改源的标题（用户 2026-10-10 要求：源管理里能改名字）
+    func renameSource(_ id: String, to newName: String) {
+        guard var record = store.record(id: id) else { return }
+        let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed != record.displayName else { return }
+        record.displayName = trimmed
+        store.upsert(record)
+        refreshRecords()
+        CatyLog.shared.info("store", "源 \(id) 改名为「\(trimmed)」")
     }
 
     func setEnabled(_ id: String, _ enabled: Bool) {

@@ -20,6 +20,9 @@ struct SourceManageView: View {
     @State private var errorText: String?
     @State private var busy = false
     @State private var panelHint: String?
+    /// 正在改名的源（用户要求：源管理里能改标题）
+    @State private var renaming: SourceRecord?
+    @State private var newName = ""
 
     var body: some View {
         if embedded {
@@ -40,6 +43,21 @@ struct SourceManageView: View {
         .navigationTitle("Caty · 源")
         .navigationBarTitleDisplayMode(.inline)
         .onAppear { coordinator.refreshRecords() }
+        .alert("改标题", isPresented: Binding(
+            get: { renaming != nil },
+            set: { if !$0 { renaming = nil } }
+        )) {
+            TextField("给这个源起个名字", text: $newName)
+            Button("保存") {
+                if let record = renaming {
+                    coordinator.renameSource(record.id, to: newName)
+                }
+                renaming = nil
+            }
+            Button("取消", role: .cancel) { renaming = nil }
+        } message: {
+            Text("只改显示的名字，不影响源本身。")
+        }
     }
 
     // MARK: - 源配置中心（登录网盘）
@@ -156,6 +174,15 @@ struct SourceManageView: View {
                 VStack(alignment: .leading, spacing: 3) {
                     HStack {
                         Text(record.displayName).font(.headline)
+                        Button {
+                            newName = record.displayName
+                            renaming = record
+                        } label: {
+                            Image(systemName: "pencil")
+                                .font(.caption)
+                                .foregroundStyle(Theme.accent)
+                        }
+                        .buttonStyle(.borderless)
                         runningBadge(record)
                         Spacer()
                         Toggle("", isOn: Binding(
@@ -187,6 +214,14 @@ struct SourceManageView: View {
                     }
                 }
                 .swipeActions {
+                    Button {
+                        newName = record.displayName
+                        renaming = record
+                    } label: {
+                        Label("改标题", systemImage: "pencil")
+                    }
+                    .tint(Theme.accent)
+
                     Button("删除", role: .destructive) { coordinator.delete(id: record.id) }
                 }
             }

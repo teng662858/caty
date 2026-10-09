@@ -45,6 +45,17 @@ enum CatyError: String, Error, LocalizedError {
     }
 }
 
+// MARK: - 源自己给出的错误原因
+
+/// 真源出错时会带一条**可读的 message**（实测：`timeout of 15000ms exceeded`、
+/// `getaddrinfo ENOTFOUND <域名>`、播放时的「还没有配置夸克 Cookie…」）。
+/// 这条信息是排错最省时间的东西，必须原样显示给用户，不能吞成"请求失败"。
+/// 单独一个类型是因为 CatyError 是 String 枚举（错误码表 docs/05 §4），不该塞自由文本。
+struct CatySourceError: LocalizedError {
+    let message: String
+    var errorDescription: String? { message }
+}
+
 // MARK: - 源状态机（docs/05 §3）
 
 enum SourceState: String, Codable {

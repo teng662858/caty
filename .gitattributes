@@ -1,0 +1,22 @@
+# 行尾统一成 LF
+#
+# 为什么要有这个文件：开发机是 Windows 且 git 全局开了 core.autocrlf=true，
+# 检出时会把文本文件变成 CRLF，而仓库里的工具（tools/check-swift-heuristics.mjs 与
+# tools/make-ios-package.mjs）会把 CRLF 判为"需要看一眼"，导致**代码包打不出来**。
+# 这里显式声明：所有文本文件在仓库与工作区都用 LF。
+* text=auto eol=lf
+
+# 二进制：不要做任何行尾转换
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ipa binary
+*.zip binary
+*.jar binary
+*.mobileprovision binary
+*.xcframework binary
+*.framework binary
+*.pbxproj binary
+*.xcworkspace binary

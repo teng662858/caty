@@ -74,6 +74,12 @@ module.exports = {
       if (path === prefix || path.startsWith(prefix + '/')) {
         const op = path === prefix ? '' : path.slice(prefix.length + 1)
 
+        // 真源为每个站点单独注册了 /init，宿主必须先调它，站点才会去解析上游域名
+        // （见 docs/contract-notes.md §8）；打桩这里回一个固定上游，让自检覆盖这条路径
+        if (op === 'init') {
+          return sendJson(res, { siteUrl: 'http://stub.local' })
+        }
+
         if (op === 'home') {
           return sendJson(res, {
             class: [

@@ -120,6 +120,17 @@ PeekPili / 魔力云播 / 蚂蚁影视 共用同一套格式），App 下载 →
     而 `node_start` 并未返回）→ `bootstrap.js` 已加"监听自愈"：每 10 秒自连一次自己，
     掉线就在**同一端口**重建 server 并重新回报 `serverStarted`（换端口会让宿主手里的旧地址失效）。
 
+18. **`POST /spider/<key>/<type>/init` 必须先调**（2026-10-10 实测，"有些站点打不开"的根因）：
+    真源给**每个站点**单独注册了 `/init`，站点在这一步才去解析自己真正的上游域名；不调就一直用
+    源码里写死的**旧域名**（会过期）→ 前端只看到「取不到内容 / 请求失败」。实测：虎斑|4K 不调 init
+    15 秒超时；调一次后 init 155 ms、home 90 ms 正常返回。一批 "wex 系" 站点（wogg/huajuan/muou/
+    guanying/duoduo/huban/leijing/123pan/shayang/jutou/qiwei/libvio/pianku）都吃这条；站点的上游
+    候选顺序 = 配置 url → 本机 db（**嵌套** `db.get('/huban/url')` → `data.huban.url`）→ 源自己的
+    远程配置（伪装成 .jpg 的 JSON）→ 写死的默认域名，并发探测后打 `[FastSiteUrl] <key> selected <url>`。
+    `NodeClient.initSite` 已按每个站点在本次会话里第一次用之前调一次（幂等）实现。
+    同时：**真源 500 时带的 message 一定要显示给用户**（`timeout of 15000ms exceeded` 这类），
+    别再吞成"请求失败"。细节见 `docs/contract-notes.md §8`。
+
 ## 铁律（不可违反）
 
 1. **只做容器**：不内置、不打包、不分发任何内容源；不实现 VIP 解析或 DRM 绕过；**只自签自用**，
@@ -144,6 +155,11 @@ PeekPili / 魔力云播 / 蚂蚁影视 共用同一套格式），App 下载 →
   播放器（进度记忆/倍速/上下集/全屏弹出）、片库（收藏+历史）、设置（配置中心/诊断/清缓存）
 - 真机联调修过的坑：桥连接生命周期、桥与 bundle 的监听自愈、跳集（导航栈堆积→改全屏弹出）、
   海报不整齐、SwiftUI 表达式过深导致类型检查超时
+- **2026-10-10 用户报的 4 件事已修**（等下一版 ipa）：
+  · 「有些站点打不开」→ 根因是**没调 `POST /init`**（见事实 18），已修；顺带把源的报错原文透出到界面
+  · 播放页可以手势返回：画面**下滑**关闭 / **左边缘右滑**返回
+  · 播放页**选集按钮加大**（44pt 高、字号 +2）
+  · 首页**整体字号 +1 号**、左上角源列表改成**2 列弹窗**
 
 **下一步（P6 打磨，用户报什么先修什么）**：
 - 后台音频、播放手势（亮度/音量/快进）、动效、浅色模式
@@ -174,6 +190,9 @@ gh run download <id> -n Caty-unsigned-ipa -D dist/ipa && cp dist/ipa/Caty-unsign
 | `tools/export-session.mjs` | 把 ZCode 会话导出成 Markdown（只读 `~/.zcode/cli/db/db.sqlite`，自动脱敏）。用户说"把对话存下来"时用它 | ✅ 只读 |
 | `tools/host/bootstrap.js` | **启动契约**实现（含编译缓存优化）—— 已逐字节同步到 `ios/Resources/bootstrap.js`，**两边必须一致** | 同 bootstrap 用途 |
 | `tools/host/p2-selftest.mjs` | **P2 链路桌面预演**：用 iOS 那份 `bootstrap.js` + 打桩 bundle 跑通 `serverStarted → /config → 站点映射` | ✅ 不下载、不执行第三方代码 |
+| `tools/probe/site-probe.mjs` | **单站点探测**：用缓存里的 bundle 起真源，对指定站点依次打 `init → home → category → detail → search → play`，打印状态码/耗时/上游地址/源日志。站点打不开时先用它 | ⚠️ 执行第三方代码（你已缓存并校验过的源） |
+| `tools/probe/src-session.mjs` | **常驻真源会话**：起好后不退出，你可以用 curl 打任意路由，同时全部日志实时输出（排查/手工试接口用） | ⚠️ 同上 |
+| `tools/probe/bootstrap-trace.js` | 排查用的 bootstrap 包装：把源的**每一次出站 HTTP 请求**打出来（配合 src-session 的 `--bootstrap` 用） | ⚠️ 同上 |
 | `tools/check-swift-heuristics.mjs` | Swift 粗略自查（Windows 无编译器时兜底）：括号平衡 / 中文引号 / 冲突标记 / 行数总览 | ✅ 只读 |
 | `tools/make-ios-package.mjs` | 一键重打包 `dist/Caty-P2P3-代码包.zip`（改完 `ios/` 后必须重跑，打前自动自查+预演） | ✅ 只读源码 |
 

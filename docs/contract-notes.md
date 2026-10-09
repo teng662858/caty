@@ -103,3 +103,50 @@ node bootstrap.js <index.js> <index.config.js> <dataRoot> <bridgePort> <token>
 - 防盗链：`play` 返回的 `header` 里到底带哪些头、是否需要 Referer（等真机播放时验证）
 - 直播 / 弹幕 / 网盘登录后的完整播放链路（P6）
 - 首屏性能基线：真源（6.5 MB bundle）在 iOS 无 JIT 下的启动耗时与常驻内存（等真机数据）
+
+---
+
+## 8. **`POST /init` 必须先调**（2026-10-10 补测，「有些源打不开」的根因）
+
+> 用户反馈："有些源打不开，我在同类 APP 里能打开"（例：**虎斑|4K**）。
+> 桌面复现 + 逐层排查后确认：**不是 App 的请求格式问题，是少调了一路 `init`。**
+
+### 8.1 现象与实测
+
+| 站点 | 只调 home（旧实现） | 先调 init 再 home（现在） |
+|---|---|---|
+| 虎斑\|4K（huban） | `500 {"message":"timeout of 15000ms exceeded"}`（15.0 s） | init 155 ms → home **90 ms** 正常返回分类/内容 |
+| 多多\|4K（duoduo） | `500 {"message":"getaddrinfo ENOTFOUND tv.yydsys.top"}`（13 ms） | init 1.8 s（自动选中 `https://tv.yydsys.cc`）→ home 4.6 s |
+| 玩偶\|4K（wogg） | 一直能用（**源码里写死的默认域名恰好还活着**） | init 1.7 s（选中 `https://www.wogg.live`）→ home 1.1 s |
+
+### 8.2 原因（源码级）
+
+- 真源给**每个站点**单独注册了 `POST /spider/<key>/<type>/init`（源码 `s.post("/init", t.init…)`），
+  并把它和 `/home` `/category` … 并列注册；**`/home` 自己不保证先跑 init**。
+- 一批"wex 系"站点（wogg / huajuan / muou / guanying / duoduo / **huban** / leijing / 123pan /
+  shayang / jutou / qiwei / libvio / pianku）的上游域名是**运行期解析**的，候选顺序是：
+  1. `index.config.js` 里该站点的 `url`（默认空字符串）
+  2. 本机配置库 `wexfnwconfig.json` 里的 `<key>.url`（**嵌套路径**：`db.get('/huban/url')` → `data.huban.url`）
+  3. 源的**远程配置**（它启动时会拉 `…/api.txt` → `ioswex.txt` → 一个伪装成 `.jpg` 的 JSON，
+     内容是 `{"huban":["http://43.248.128.118:16969/"], "duoduo":["https://tv.yydsys.top/","https://tv.yydsys.cc/", …], …}`）
+  4. 源码里**写死的默认域名**（会过期！huban 是 `http://103.217.192.130:16969`，duoduo 是 `https://tv.yydsys.top`）
+  候选们会被**并发探测**（6 s 超时，取第一个有内容的），并把结果打一行
+  `[FastSiteUrl] <key> selected <url>, probe=…ms`。
+- 不调 init 时，`siteUrl` 停在**第 4 项**（写死的旧域名）——huban 的那个 IP 已经连不上（SYN 超时），
+  duoduo 的 `tv.yydsys.top` 已经**没有 DNS 记录**，于是前端只看到"取不到内容 / 请求失败"。
+- 顺带确认：`POST /spider/<key>/<type>/init` 返回 `{"siteUrl":"…"}`；**没有 init 的站点返回 404**，属正常。
+
+### 8.3 对实现的影响（已改）
+
+1. `NodeClient.initSite(site:)`：每个站点在**本次运行时会话里第一次用到之前**先调一次
+   `/init`（幂等、失败撤销标记以便"重试"时再试），`home / category / detail / search / play` 入口都先经过它。
+2. **源的报错文案必须显示给用户**：真源 500 时带 `message`（`timeout of 15000ms exceeded` 这种），
+   以前被吞成"请求失败"，现在原样透出（`CatySourceError`），首页错误态写成"源返回：<原文>"。
+3. 打桩 bundle 增加 `/init` 路由、`p2-selftest.mjs` 增加一条检查；`node-host.mjs` 串联探测也先调 init。
+4. 新工具 `tools/probe/site-probe.mjs`（单站点探测）与 `tools/probe/src-session.mjs`（常驻会话），
+   `tools/probe/bootstrap-trace.js`（把源的每一次出站请求打出来——这次就是靠它定位的）。
+
+### 8.4 排错口诀（以后照这个顺序）
+
+1. `node tools/probe/site-probe.mjs --sites <key>`：先看 `init` 的 `siteUrl` 是不是个"像样的域名"；
+2. 再看 `[FastSiteUrl] … selected …` 那行；3 再看 home/category 的状态码与源给的 message。

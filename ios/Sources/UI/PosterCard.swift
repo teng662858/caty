@@ -54,6 +54,8 @@ struct PosterCard: View {
 
     let item: VodItem
     var showRemarks = true
+    /// 片名字号（首页要"大一号"，其它格子保持原样）
+    var titleFont: Font = .caption
 
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
@@ -68,7 +70,7 @@ struct PosterCard: View {
             }
             // reservesSpace：片名一行还是两行都占两行高度 → 每格高度一致
             Text(item.name)
-                .font(.caption)
+                .font(titleFont)
                 .lineLimit(2, reservesSpace: true)
                 .multilineTextAlignment(.leading)
                 .frame(maxWidth: .infinity, alignment: .leading)

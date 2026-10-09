@@ -137,6 +137,7 @@ const checks = [
   ['GET  /config/sites/list', 'GET', '/config/sites/list', undefined, 200],
   ['GET  /versioning', 'GET', '/versioning', undefined, 200],
   ['GET  /health（源自带探活）', 'GET', '/health', undefined, 200],
+  ['POST /spider/demo/3/init（站点初始化，必须先调）', 'POST', '/spider/demo/3/init', {}, 200],
   ['POST /spider/demo/3/home（分类+filters）', 'POST', '/spider/demo/3/home', {}, 200],
   ['POST /spider/demo/3/category（列表）', 'POST', '/spider/demo/3/category', { tid: '1', pg: '1' }, 200],
   ['POST /spider/demo/3/detail（详情）', 'POST', '/spider/demo/3/detail', { id: '1' }, 200],

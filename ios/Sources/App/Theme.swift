@@ -35,16 +35,33 @@ struct ChipLabel: View {
     let text: String
     var selected = false
     var compact = false
+    /// 首页用的"大一号"版式（用户反馈整体字号偏小）
+    var large = false
 
     var body: some View {
         Text(text)
-            .font(compact ? .caption2 : .caption)
+            .font(font)
             .lineLimit(1)
-            .padding(.horizontal, compact ? 8 : 12)
-            .padding(.vertical, compact ? 3 : 6)
+            .padding(.horizontal, horizontalPadding)
+            .padding(.vertical, verticalPadding)
             .background(selected ? Theme.accent.opacity(0.22) : Color.secondary.opacity(0.12))
             .foregroundStyle(selected ? Theme.accent : Color.primary)
             .clipShape(Capsule())
+    }
+
+    private var font: Font {
+        if large { return compact ? .footnote : .subheadline }
+        return compact ? .caption2 : .caption
+    }
+
+    private var horizontalPadding: CGFloat {
+        if large { return 12 }
+        return compact ? 8 : 12
+    }
+
+    private var verticalPadding: CGFloat {
+        if large { return 7 }
+        return compact ? 3 : 6
     }
 }
 

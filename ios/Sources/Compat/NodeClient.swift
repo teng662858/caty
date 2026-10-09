@@ -4,6 +4,7 @@
 //
 //  ⚠️ 契约是 **M0 实测**出来的（tools/host/node-host.mjs --run --probe-routes），不是猜的：
 //     GET  /config                    站点目录（唯一一个 GET）
+//     POST /spider/<key>/3/init       body {}                    → {siteUrl:"…"}（**每个操作的先决条件**）
 //     POST /spider/<key>/3/home       body {}                    → {class:[{type_id,type_name}], filters}
 //     POST /spider/<key>/3/category   body {tid, pg}             → {page, pagecount, list:[vod_*]}
 //     POST /spider/<key>/3/detail     body {id: "<vod_id>"}      → {list:[vod_* 含 vod_play_from/url]}
@@ -11,6 +12,14 @@
 //     POST /spider/<key>/3/play       body {flag, id}            → {url, header?, parse?}
 //     两段式（无 op）与 GET 一律 404；key 用去掉 nodejs_ 前缀的那个。
 //     详细实测记录见 docs/contract-notes.md。
+//
+//  ⚠️ **`init` 必须调**（2026-10-10 实测，见 docs/contract-notes.md §8）：
+//     源为每个站点单独注册了 `POST /spider/<key>/<type>/init`，站点在这一步才去解析自己
+//     真正的上游域名（顺序：配置里的 url → 本机 db → 源的远程配置 → 代码里写死的默认域名）。
+//     不调 init 就会一直用代码里那份**会过期的默认域名**，于是首页报
+//     `timeout of 15000ms exceeded` / `getaddrinfo ENOTFOUND …`（真机与桌面都复现过）。
+//     实测：虎斑|4K 不调 init 15 秒超时；调一次 init 后同一个请求 0.4 秒返回内容。
+//     所以每个站点在**本次运行时会话里第一次用到之前**先 init 一次（见 initSite）。
 //
 
 import Foundation
@@ -42,12 +51,44 @@ final class NodeClient {
     private let userAgent = "okhttp/3.15.0"
     private let session: URLSession
 
+    /// 已经 init 过的站点（键 = 服务地址 + 站点 key）。
+    /// 用 static：运行时重启会换端口 → 自动全部失效，不需要额外清理；
+    /// 放在类里（而不是实例里）是因为 loadSites() 可能重建 client。
+    private static var initializedSites = Set<String>()
+    private static let initLock = NSLock()
+
     init(serviceBase: String) {
         self.serviceBase = serviceBase
         let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForRequest = 20
         configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
         session = URLSession(configuration: configuration)
+    }
+
+    // MARK: - 站点初始化（每个站点第一次用之前必须调一次）
+
+    /// 幂等：同一个运行时会话里每个站点只真的发一次请求。
+    /// 失败**不算致命**（有的站点没有 init，或它自己能退回默认域名），
+    /// 但会把标记撤掉，这样用户点「重试」时会再试一次。
+    func initSite(_ site: SiteInfo) async {
+        let token = serviceBase + "|" + site.key
+        Self.initLock.lock()
+        let done = Self.initializedSites.contains(token)
+        if !done { Self.initializedSites.insert(token) }
+        Self.initLock.unlock()
+        guard !done else { return }
+
+        do {
+            let payload = try await request("POST", api: site.api, query: [:], body: [:], operation: "init")
+            let upstream = payload.str("siteUrl") ?? payload.str("url") ?? "-"
+            CatyLog.shared.info("site", "\(site.name) 初始化完成（上游地址 \(upstream)）")
+        } catch {
+            Self.initLock.lock()
+            Self.initializedSites.remove(token)
+            Self.initLock.unlock()
+            // 404 = 这个站点没有 init 路由（很常见），降级为 debug，不吓人
+            CatyLog.shared.debug("site", "\(site.name) init 跳过：\(error.localizedDescription)")
+        }
     }
 
     // MARK: - 站点目录（GET /config）
@@ -63,6 +104,7 @@ final class NodeClient {
     // MARK: - 首页（分类 + 可能有的一批内容）
 
     func home(site: SiteInfo) async throws -> HomeContent {
+        await initSite(site)
         let payload = try await request("POST", api: site.api, query: [:], body: [:], operation: "home")
         let categories = Self.parseCategories(payload)
         let items = Self.parseItems(payload, site: site)
@@ -77,6 +119,7 @@ final class NodeClient {
     /// extend：筛选项（例如 ["area": "us"]）；源实测会带 filter/extend 一起提交
     func category(site: SiteInfo, tid: String?, page: Int,
                   extend: [String: String] = [:]) async throws -> CategoryPage {
+        await initSite(site)
         var body: [String: Any] = ["pg": String(page)]
         if let tid, !tid.isEmpty { body["tid"] = tid }
         if !extend.isEmpty {
@@ -95,6 +138,7 @@ final class NodeClient {
     // MARK: - 详情（注意：字段名是单数 id，实测 {ids:...} 会返回空）
 
     func detail(site: SiteInfo, ids: String) async throws -> VodDetail? {
+        await initSite(site)
         let payload = try await request("POST", api: site.api, query: [:], body: ["id": ids], operation: "detail")
         guard let raw = payload.dictArray("list").first,
               let item = VodItem(json: raw, siteKey: site.key, sourceId: site.sourceId) else {
@@ -113,6 +157,7 @@ final class NodeClient {
     // MARK: - 搜索
 
     func search(site: SiteInfo, keyword: String) async throws -> [VodItem] {
+        await initSite(site)
         let payload = try await request("POST", api: site.api, query: [:], body: ["wd": keyword], operation: "search")
         return Self.parseItems(payload, site: site)
     }
@@ -121,6 +166,7 @@ final class NodeClient {
 
     /// 字段里的串可能是直链（http/https、/proxy…），也可能是不透明标识（base64 token）→ 问一次 play
     func resolvePlay(episodeURL: String, flag: String, site: SiteInfo) async throws -> (url: URL, headers: [String: String]) {
+        await initSite(site)
         let trimmed = PlayUrlParser.normalize(episodeURL).trimmingCharacters(in: .whitespaces)
         let lowered = trimmed.lowercased()
 
@@ -142,7 +188,7 @@ final class NodeClient {
             // 源自己会给出可读的原因（例如"还没有配置夸克 Cookie，请先去配置中心登录夸克"）
             let reason = payload.str("message") ?? "源没有返回播放地址"
             CatyLog.shared.warn("player", "取播放地址失败：\(reason)")
-            throw CatyError.playbackUnsupported
+            throw CatySourceError(message: reason)
         }
 
         var headers: [String: String] = [:]
@@ -242,10 +288,14 @@ final class NodeClient {
             let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
 
             guard (200..<300).contains(code) else {
-                // 把源自己给的 message 带出来（排错最省时间）
+                // 把源自己给的 message 带出来（排错最省时间，直接显示给用户）
                 let message = object?.str("message") ?? String(decoding: data.prefix(160), as: UTF8.self)
                 CatyLog.shared.warn("site", "\(url.path) 返回 \(code)：\(message)")
                 if code == 404 { throw CatyError.siteEmpty }
+                let readable = message.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !readable.isEmpty, readable != "Not Found" {
+                    throw CatySourceError(message: readable)
+                }
                 throw CatyError.requestFailed
             }
             guard let object else {
@@ -255,6 +305,8 @@ final class NodeClient {
             }
             return object
         } catch let error as CatyError {
+            throw error
+        } catch let error as CatySourceError {
             throw error
         } catch {
             CatyLog.shared.warn("site", "\(method) \(url.path) 失败：\(error.localizedDescription)")

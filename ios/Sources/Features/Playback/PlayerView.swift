@@ -2,6 +2,11 @@
 //  PlayerView.swift
 //  播放页（P5）：进度记忆 / 断点续播 / 倍速 / 上一集下一集 / 播完自动下一集
 //
+//  返回手势（2026-10-10 用户反馈"播放页要能返回上一页"）：
+//  全屏弹出没法用手势返回，这里自己加两个——
+//    · 在画面上**向下滑** → 关闭播放页（松手超过阈值就关，跟抖音那套一样）
+//    · **从屏幕左边缘往右滑** → 同样关闭（系统"返回上一页"的手感）
+//
 
 import SwiftUI
 import AVKit
@@ -20,6 +25,9 @@ struct PlayerView: View {
     @State private var errorText: String?
     @State private var position: Double = 0
     @State private var duration: Double = 0
+    /// 跟手位移：下滑关闭 / 左边缘返回各一个（用于拖的时候页面跟着动）
+    @State private var dragY: CGFloat = 0
+    @State private var dragX: CGFloat = 0
 
     private let ticker = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
@@ -57,16 +65,16 @@ struct PlayerView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    Button {
-                        saveProgress(force: true)
-                        engine.stop()
-                        dismiss()
-                    } label: {
+                    Button { close() } label: {
                         Label("返回", systemImage: "chevron.down")
                     }
                 }
             }
         }
+        // 拖动的反馈：两个方向都只允许"正向"位移，看起来就像页面被拽出去
+        .offset(y: max(0, dragY))
+        .offset(x: max(0, dragX))
+        .simultaneousGesture(backSwipeGesture)
         .task { await resolve() }
         .onDisappear {
             saveProgress(force: true)
@@ -83,6 +91,55 @@ struct PlayerView: View {
         }
     }
 
+    // MARK: - 返回手势
+
+    /// 关闭播放页（按钮和手势都走这里）
+    private func close() {
+        saveProgress(force: true)
+        engine.stop()
+        dismiss()
+    }
+
+    /// 左边缘往右滑：起手点必须在屏幕最左边 32pt 内，横向位移为主
+    private var backSwipeGesture: some Gesture {
+        DragGesture(minimumDistance: 12)
+            .onChanged { value in
+                guard value.startLocation.x < 32 else {
+                    dragX = 0
+                    return
+                }
+                let dx = value.translation.width
+                let dy = value.translation.height
+                dragX = (dx > 0 && abs(dx) > abs(dy)) ? dx : 0
+            }
+            .onEnded { value in
+                guard value.startLocation.x < 32 else { return }
+                if value.translation.width > 70 || value.predictedEndTranslation.width > 180 {
+                    close()
+                } else {
+                    withAnimation(.easeOut(duration: 0.2)) { dragX = 0 }
+                }
+            }
+    }
+
+    /// 画面上向下滑：只认"竖直向下"的位移，避免和进度条/横向滑动打架
+    private var dismissDragGesture: some Gesture {
+        DragGesture(minimumDistance: 16)
+            .onChanged { value in
+                let dy = value.translation.height
+                let dx = value.translation.width
+                dragY = (dy > 0 && abs(dy) > abs(dx) * 1.2) ? dy : 0
+            }
+            .onEnded { value in
+                let dy = value.translation.height
+                if dy > 110 || value.predictedEndTranslation.height > 240 {
+                    close()
+                } else {
+                    withAnimation(.spring(response: 0.28, dampingFraction: 0.9)) { dragY = 0 }
+                }
+            }
+    }
+
     // MARK: - 视频区
 
     private var videoArea: some View {
@@ -92,6 +149,7 @@ struct PlayerView: View {
         }
         .aspectRatio(16.0 / 9.0, contentMode: .fit)
         .frame(maxWidth: .infinity)
+        .gesture(dismissDragGesture)
     }
 
     // MARK: - 信息
@@ -135,24 +193,29 @@ struct PlayerView: View {
     // MARK: - 控制条
 
     private var controlBar: some View {
-        HStack(spacing: Theme.spacingL) {
+        HStack(spacing: Theme.spacingM) {
             Button { switchTo(index - 1) } label: {
-                Image(systemName: "backward.end.fill")
+                Image(systemName: "backward.end.fill").font(.title3).frame(width: 44, height: 44)
             }
             .disabled(index <= 0)
 
             Button { engine.toggle() } label: {
                 Image(systemName: engine.isPlaying ? "pause.fill" : "play.fill")
                     .font(.title2)
+                    .frame(width: 52, height: 44)
             }
 
             Button { playNext(auto: false) } label: {
-                Image(systemName: "forward.end.fill")
+                Image(systemName: "forward.end.fill").font(.title3).frame(width: 44, height: 44)
             }
             .disabled(index >= episodes.count - 1)
 
-            Button { seek(by: -15) } label: { Image(systemName: "gobackward.15") }
-            Button { seek(by: 15) } label: { Image(systemName: "goforward.15") }
+            Button { seek(by: -15) } label: {
+                Image(systemName: "gobackward.15").font(.title3).frame(width: 44, height: 44)
+            }
+            Button { seek(by: 15) } label: {
+                Image(systemName: "goforward.15").font(.title3).frame(width: 44, height: 44)
+            }
 
             Spacer()
 
@@ -166,7 +229,9 @@ struct PlayerView: View {
                 }
             } label: {
                 Text(rate == 1.0 ? "倍速" : String(format: "%gx", rate))
-                    .font(.footnote)
+                    .font(.subheadline)
+                    .frame(height: 44)
+                    .padding(.horizontal, 4)
             }
         }
         .buttonStyle(.plain)
@@ -178,15 +243,24 @@ struct PlayerView: View {
     private var episodeStrip: some View {
         VStack(alignment: .leading, spacing: Theme.spacingS) {
             Text("选集（\(episodes.count)）· \(request.flag)")
-                .font(.footnote)
+                .font(.subheadline)
                 .foregroundStyle(.secondary)
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: Theme.spacingS) {
-                    ForEach(Array(episodes.enumerated()), id: \.element.id) { i, ep in
-                        Button { switchTo(i) } label: {
-                            ChipLabel(text: ep.name, selected: i == index, compact: true)
+                ScrollViewReader { proxy in
+                    HStack(spacing: Theme.spacingM) {
+                        ForEach(Array(episodes.enumerated()), id: \.element.id) { i, ep in
+                            Button { switchTo(i) } label: {
+                                EpisodeChip(text: ep.name, selected: i == index)
+                            }
+                            .buttonStyle(.plain)
+                            .id(i)
                         }
-                        .buttonStyle(.plain)
+                    }
+                    .padding(.vertical, 2)
+                    // 进来时把"正在播的那一集"滚到中间，不用自己找
+                    .onAppear { proxy.scrollTo(index, anchor: .center) }
+                    .onChange(of: index) { _, newValue in
+                        withAnimation { proxy.scrollTo(newValue, anchor: .center) }
                     }
                 }
             }
@@ -308,5 +382,26 @@ struct PlayerView: View {
         let s = total % 60
         if h > 0 { return String(format: "%d:%02d:%02d", h, m, s) }
         return String(format: "%02d:%02d", m, s)
+    }
+}
+
+/// 选集按钮：比分类那排胶囊**大一圈**（用户反馈原来的太小、不好点）
+/// 44pt 是 iOS 的最小舒适点击区，这里按 44 高 + 至少 60 宽来做。
+private struct EpisodeChip: View {
+
+    let text: String
+    let selected: Bool
+
+    var body: some View {
+        Text(text)
+            .font(.subheadline)
+            .lineLimit(1)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .frame(minWidth: 60, minHeight: 44)
+            .background(selected ? Theme.accent.opacity(0.22) : Color.secondary.opacity(0.12))
+            .foregroundStyle(selected ? Theme.accent : Color.primary)
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+            .contentShape(RoundedRectangle(cornerRadius: 10))
     }
 }

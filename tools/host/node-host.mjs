@@ -525,6 +525,9 @@ if (PROBE_ROUTES) {
     const candidates = sites.map((s) => String(s.key || '').replace(/^nodejs_/, '')).filter((k) => k && !skipKeys.has(k)).slice(0, 6)
     let found = null
     for (const key of candidates) {
+      // 宿主必须先调 init：站点在这一步才去解析自己真正的上游域名（见 docs/contract-notes.md §8）
+      const init = await tryPost(key, 'init', {})
+      console.log(`\n  ▸ 站点 ${key}: init → ${init.status}${init.json?.siteUrl ? `  上游 ${init.json.siteUrl}` : ''}`)
       const home = await tryPost(key, 'home', {})
       const tids = (home.json?.class || []).map((c) => c.type_id).filter(Boolean)
       console.log(`\n  ▸ 站点 ${key}: home → ${home.status}  class=${(home.json?.class || []).length} 条${home.json?.filters ? '（含 filters）' : ''}${tids.length ? `  tid[0]=${tids[0]}` : ''}`)

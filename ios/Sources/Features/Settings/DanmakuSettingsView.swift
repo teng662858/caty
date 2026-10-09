@@ -94,7 +94,7 @@ struct DanmakuSettingsView: View {
 
     // MARK: - 小工具
 
-    private func binding<T>(_ keyPath: ReferenceWritableKeyPath<AppSettings, T>) -> Binding<T> {
+    private func binding<T>(_ keyPath: WritableKeyPath<AppSettings, T>) -> Binding<T> {
         Binding(get: { library.settings[keyPath: keyPath] },
                 set: { library.settings[keyPath: keyPath] = $0 })
     }

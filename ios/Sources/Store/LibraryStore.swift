@@ -196,7 +196,7 @@ final class LibraryStore: ObservableObject {
         lock.lock()
         history = []
         lock.unlock()
-        publish { $0.history = [] }
+        publish(history: [])
         saveAsync()
     }
 
@@ -204,7 +204,7 @@ final class LibraryStore: ObservableObject {
         lock.lock()
         favorites = []
         lock.unlock()
-        publish { $0.favorites = [] }
+        publish(favorites: [])
         saveAsync()
     }
 

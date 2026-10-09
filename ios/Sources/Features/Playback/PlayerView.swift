@@ -276,19 +276,19 @@ struct PlayerView: View {
         .frame(maxHeight: controller.isPortraitVideo ? 420 : nil)
         .contentShape(Rectangle())
         .gesture(videoDragGesture)
+        // ⚠️ 2 倍速只能写在 perform 里：onPressingChanged 是"手指一按下就 true"，
+        // 写在它里面会导致**点一下就变 2 倍速**（用户真机反馈过）。
+        // perform 是"按满 0.5 秒"才触发；松手（pressing=false）再恢复。
         .onLongPressGesture(minimumDuration: 0.5) {
-            // 长按临时 2 倍速（松手恢复）
-        } onPressingChanged: { pressing in
             guard controller.videoAspectReady else { return }
-            if pressing, !longPressRate {
-                longPressRate = true
-                controller.setRate(2.0)
-                hud = GestureHUD(kind: .rate, value: 2.0, text: "2 倍速播放中")
-            } else if !pressing, longPressRate {
-                longPressRate = false
-                controller.setRate(rate)
-                clearHUDSoon()
-            }
+            longPressRate = true
+            controller.setRate(2.0)
+            hud = GestureHUD(kind: .rate, value: 2.0, text: "2 倍速播放中")
+        } onPressingChanged: { pressing in
+            guard !pressing, longPressRate else { return }
+            longPressRate = false
+            controller.setRate(rate)
+            clearHUDSoon()
         }
         .overlay(alignment: .bottomTrailing) {
             if !showFullscreen, controller.videoAspectReady {

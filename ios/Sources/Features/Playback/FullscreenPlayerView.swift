@@ -61,15 +61,14 @@ struct FullscreenPlayerView: View {
             .contentShape(Rectangle())
             .onTapGesture { toggleControls() }
             .gesture(videoDragGesture)
+            // 同上：2 倍速写在 perform 里（按满 0.5 秒才生效），松手恢复
             .onLongPressGesture(minimumDuration: 0.5) {
+                controller.setRate(2.0)
+                hud = GestureHUD(kind: .rate, value: 2.0, text: "2 倍速播放中")
             } onPressingChanged: { pressing in
-                if pressing {
-                    controller.setRate(2.0)
-                    hud = GestureHUD(kind: .rate, value: 2.0, text: "2 倍速播放中")
-                } else {
-                    controller.setRate(rate)
-                    clearHUDSoon()
-                }
+                guard !pressing else { return }
+                controller.setRate(rate)
+                clearHUDSoon()
             }
 
             if danmakuEnabled, let comments = danmakuStore.current {

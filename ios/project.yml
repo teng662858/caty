@@ -62,6 +62,10 @@ targets:
         # 嵌入动态 framework 后必须能找到它，否则启动就报
         # Library not loaded: @rpath/NodeMobile.framework/NodeMobile
         LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/Frameworks"
+        # libmpv 那堆静态库要的链接项（等价于 MPVKit Package.swift 里 _FFmpeg/_MPVKit 的 linkerSettings）。
+        # 尤其 -lc++：Swift 代码自己不引 C++，但 MoltenVK/uchardet 要，
+        # 少了就报 "___cxa_throw / ___gxx_personality_v0 undefined"（CI 上踩过）。
+        OTHER_LDFLAGS: "$(inherited) -lc++ -lz -lbz2 -liconv -lresolv -lexpat -lxml2"
     dependencies:
       - framework: Frameworks/NodeMobile.xcframework
         embed: true                            # 等价于 Xcode 里的 Embed & Sign

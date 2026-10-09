@@ -90,6 +90,13 @@ final class NodeRuntime: ObservableObject {
     /// 当前启动的是哪个源（P4 起 HomeView 靠它去 /config 拉站点）
     @Published private(set) var activeSourceId = ""
 
+    // 源主动推给用户的两样东西（见 RootView）
+    @Published private(set) var toastText: String?
+    @Published private(set) var webPanelURL: URL?
+
+    func clearToast() { toastText = nil }
+    func closeWebPanel() { webPanelURL = nil }
+
     /// iOS 上不能重启 Node（见文件头第 1 条）
     let canRelaunch = false
 
@@ -245,8 +252,26 @@ final class NodeRuntime: ObservableObject {
             let detail = message.opt["message"] as? String ?? "(无内容)"
             fail("nodeError：\(detail)")
 
+        case "toast":
+            let text = message.opt["message"] as? String
+                ?? message.opt["msg"] as? String
+                ?? message.opt["text"] as? String
+                ?? "(源发来一条提示)"
+            toastText = text
+            CatyLog.shared.info("bridge", "源提示：\(text)（参数键=\(message.opt.keys.sorted().joined(separator: ","))）")
+
+        case "openInternalWebview":
+            let raw = message.opt["url"] as? String ?? message.opt["link"] as? String ?? ""
+            if !raw.isEmpty, let url = URL(string: raw) {
+                webPanelURL = url
+                CatyLog.shared.info("bridge", "源要求打开内置网页：\(raw)")
+            } else {
+                CatyLog.shared.warn("bridge", "openInternalWebview 未带 url（参数键=\(message.opt.keys.sorted().joined(separator: ","))）")
+            }
+
         default:
-            CatyLog.shared.info("bridge", "收到消息 action=\(message.action)")
+            CatyLog.shared.info("bridge",
+                "收到消息 action=\(message.action)（参数键=\(message.opt.keys.sorted().joined(separator: ","))）")
         }
     }
 

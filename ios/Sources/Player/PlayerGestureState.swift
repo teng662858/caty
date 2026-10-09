@@ -30,10 +30,10 @@ final class PlayerGestureState: ObservableObject {
         if volumeSlider == nil {
             let volumeView = MPVolumeView(frame: .zero)
             volumeView.showsRouteButton = false
-            volumeSlider = volumeView.subviews.compactMap { $0 as? UISlider }.first
+            self.volumeSlider = volumeView.subviews.compactMap { $0 as? UISlider }.first
         }
-        volume = volumeSlider?.value ?? AVAudioSession.sharedInstance().outputVolume
-        brightness = UIScreen.main.brightness
+        self.volume = volumeSlider?.value ?? AVAudioSession.sharedInstance().outputVolume
+        self.brightness = UIScreen.main.brightness
     }
 
     /// 一个手势包办四种动作
@@ -54,33 +54,33 @@ final class PlayerGestureState: ObservableObject {
                     let current = controller.position
                     let target = max(0, min(total > 0 ? total - 1 : current + seconds, current + seconds))
                     controller.seek(to: target)
-                    hud = GestureHUD(kind: .seek, value: seconds,
+                    self.hud = GestureHUD(kind: .seek, value: seconds,
                                      text: "\(seconds >= 0 ? "+" : "")\(Int(seconds)) 秒")
                     return
                 }
                 if let onClose, dy > 0, abs(dy) > abs(dx) * 1.2 {
                     dragOffset?.wrappedValue = dy        // 小窗：下滑关闭
-                    hud = nil
+                    self.hud = nil
                     _ = onClose
                     return
                 }
                 dragOffset?.wrappedValue = 0
                 let delta = -Double(dy) / 260.0
                 if value.startLocation.x < viewWidth / 2 {
-                    brightness = min(1, max(0, brightness + CGFloat(delta)))
-                    UIScreen.main.brightness = brightness
-                    hud = GestureHUD(kind: .brightness, value: Double(brightness),
+                    self.brightness = min(1, max(0, brightness + CGFloat(delta)))
+                    UIScreen.main.brightness = self.brightness
+                    self.hud = GestureHUD(kind: .brightness, value: Double(brightness),
                                      text: "\(Int(brightness * 100))%")
                 } else {
-                    volume = min(1, max(0, volume + Float(delta)))
-                    volumeSlider?.value = volume
-                    hud = GestureHUD(kind: .volume, value: Double(volume),
+                    self.volume = min(1, max(0, volume + Float(delta)))
+                    self.volumeSlider?.value = self.volume
+                    self.hud = GestureHUD(kind: .volume, value: Double(volume),
                                      text: "\(Int(volume * 100))%")
                 }
             }
             .onEnded { value in
                 if let onClose, value.translation.height > 110 || value.predictedEndTranslation.height > 240 {
-                    hud = nil
+                    self.hud = nil
                     onClose()
                     return
                 }
@@ -97,7 +97,7 @@ final class PlayerGestureState: ObservableObject {
     func pressingChanged(_ pressing: Bool, controller: PlaybackController, normalRate: Double) {
         if pressing {
             controller.setRate(2.0)
-            hud = GestureHUD(kind: .rate, value: 2.0, text: "2 倍速播放中")
+            self.hud = GestureHUD(kind: .rate, value: 2.0, text: "2 倍速播放中")
         } else {
             controller.setRate(normalRate)
             clearHUDSoon()
@@ -105,7 +105,7 @@ final class PlayerGestureState: ObservableObject {
     }
 
     func show(seconds: Double) {
-        hud = GestureHUD(kind: .seek, value: seconds,
+        self.hud = GestureHUD(kind: .seek, value: seconds,
                          text: "\(seconds >= 0 ? "+" : "")\(Int(seconds)) 秒")
         clearHUDSoon()
     }
@@ -116,7 +116,7 @@ final class PlayerGestureState: ObservableObject {
         hideTask = Task {
             try? await Task.sleep(nanoseconds: 800_000_000)
             guard !Task.isCancelled else { return }
-            hud = nil
+            self.hud = nil
         }
     }
 }

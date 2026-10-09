@@ -114,7 +114,7 @@ struct ScriptManageView: View {
         .navigationTitle("站点脚本")
         .navigationBarTitleDisplayMode(.inline)
         .fileImporter(isPresented: $importing,
-                      allowedContentTypes: [.data, .plainText, .javascript, .item],
+                      allowedContentTypes: [.data, .plainText, .item],
                       allowsMultipleSelection: false) { result in
             handleImport(result)
         }

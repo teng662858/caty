@@ -78,7 +78,8 @@ enum DanmakuService {
     private static let lock = NSLock()
 
     /// 取某个剧/某一集的弹幕（带缓存）。没有就返回空数组，不抛错（弹幕失败不该影响播放）。
-    static func comments(base: String, name: String, episode: Int?) async -> [DanmakuComment] {
+    static func comments(base: String, name: String, episode: Int?, remoteBase: String? = nil) async -> [DanmakuComment] {
+        let serviceBase = ((remoteBase?.isEmpty == false) ? remoteBase! : base)
         let key = "\(base)|\(name)|\(episode.map(String.init) ?? "-")"
         lock.lock()
         if let hit = cache[key] {

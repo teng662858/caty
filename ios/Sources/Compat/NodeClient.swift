@@ -46,7 +46,11 @@ struct FilterOption: Hashable {
 
 final class NodeClient {
 
+    /// 主源的服务地址（多源下是第一个就绪的源；诊断屏/配置中心用）
     let serviceBase: String
+
+    /// **每个源各自的本地服务地址**（sourceId → base）。多源同进程时靠它把请求送到对的那个源
+    private(set) var bases: [String: String] = [:]
 
     private let userAgent = "okhttp/3.15.0"
     private let session: URLSession
@@ -59,10 +63,28 @@ final class NodeClient {
 
     init(serviceBase: String) {
         self.serviceBase = serviceBase
+        self.bases = [:]
         let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForRequest = 20
         configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
         session = URLSession(configuration: configuration)
+    }
+
+    // MARK: - 源地址表（多源）
+
+    func setBase(_ base: String, for sourceId: String) {
+        bases[sourceId] = base
+    }
+
+    func removeBase(for sourceId: String) {
+        bases[sourceId] = nil
+    }
+
+    /// 站点 / 源 → 该用哪个本地服务地址
+    func base(for sourceId: String) -> String? {
+        if let base = bases[sourceId] { return base }
+        // 兼容：还没有分发表（老流程/打桩）时退回主地址
+        return bases.isEmpty ? serviceBase : nil
     }
 
     // MARK: - 站点初始化（每个站点第一次用之前必须调一次）
@@ -71,7 +93,8 @@ final class NodeClient {
     /// 失败**不算致命**（有的站点没有 init，或它自己能退回默认域名），
     /// 但会把标记撤掉，这样用户点「重试」时会再试一次。
     func initSite(_ site: SiteInfo) async {
-        let token = serviceBase + "|" + site.key
+        guard let base = base(for: site.sourceId) else { return }
+        let token = base + "|" + site.key
         Self.initLock.lock()
         let done = Self.initializedSites.contains(token)
         if !done { Self.initializedSites.insert(token) }
@@ -79,7 +102,7 @@ final class NodeClient {
         guard !done else { return }
 
         do {
-            let payload = try await request("POST", api: site.api, query: [:], body: [:], operation: "init")
+            let payload = try await request(base: base, "POST", api: site.api, query: [:], body: [:], operation: "init")
             let upstream = payload.str("siteUrl") ?? payload.str("url") ?? "-"
             CatyLog.shared.info("site", "\(site.name) 初始化完成（上游地址 \(upstream)）")
         } catch {
@@ -94,7 +117,8 @@ final class NodeClient {
     // MARK: - 站点目录（GET /config）
 
     func configSites(sourceId: String) async throws -> [SiteInfo] {
-        let payload = try await request("GET", api: "/config", query: [:], body: nil)
+        guard let base = base(for: sourceId) else { throw CatyError.runtimeDown }
+        let payload = try await request(base: base, "GET", api: "/config", query: [:], body: nil)
         guard let mapped = SiteMapper.map(configJSON: payload, sourceId: sourceId) else {
             throw CatyError.configInvalid
         }
@@ -105,7 +129,7 @@ final class NodeClient {
 
     func home(site: SiteInfo) async throws -> HomeContent {
         await initSite(site)
-        let payload = try await request("POST", api: site.api, query: [:], body: [:], operation: "home")
+        let payload = try await request(base: try requireBase(site), "POST", api: site.api, query: [:], body: [:], operation: "home")
         let categories = Self.parseCategories(payload)
         let items = Self.parseItems(payload, site: site)
         let filters = Self.parseFilters(payload)
@@ -127,7 +151,7 @@ final class NodeClient {
             body["extend"] = extend
         }
 
-        let payload = try await request("POST", api: site.api, query: [:], body: body, operation: "category")
+        let payload = try await request(base: try requireBase(site), "POST", api: site.api, query: [:], body: body, operation: "category")
         let items = Self.parseItems(payload, site: site)
         return CategoryPage(categories: Self.parseCategories(payload),
                             items: items,
@@ -139,7 +163,7 @@ final class NodeClient {
 
     func detail(site: SiteInfo, ids: String) async throws -> VodDetail? {
         await initSite(site)
-        let payload = try await request("POST", api: site.api, query: [:], body: ["id": ids], operation: "detail")
+        let payload = try await request(base: try requireBase(site), "POST", api: site.api, query: [:], body: ["id": ids], operation: "detail")
         guard let raw = payload.dictArray("list").first,
               let item = VodItem(json: raw, siteKey: site.key, sourceId: site.sourceId) else {
             return nil
@@ -158,7 +182,7 @@ final class NodeClient {
 
     func search(site: SiteInfo, keyword: String) async throws -> [VodItem] {
         await initSite(site)
-        let payload = try await request("POST", api: site.api, query: [:], body: ["wd": keyword], operation: "search")
+        let payload = try await request(base: try requireBase(site), "POST", api: site.api, query: [:], body: ["wd": keyword], operation: "search")
         return Self.parseItems(payload, site: site)
     }
 
@@ -175,12 +199,12 @@ final class NodeClient {
             return (url, [:])
         }
         if trimmed.hasPrefix("/") {
-            guard let url = URL(string: serviceBase + trimmed) else { throw CatyError.playbackUnsupported }
+            guard let url = URL(string: try requireBase(site) + trimmed) else { throw CatyError.playbackUnsupported }
             return (url, [:])
         }
 
         CatyLog.shared.info("site", "播放标识不是直链 → POST play（flag=\(flag)，id 前 24 位 \(trimmed.prefix(24))…）")
-        let payload = try await request("POST", api: site.api, query: [:],
+        let payload = try await request(base: try requireBase(site), "POST", api: site.api, query: [:],
                                         body: ["flag": flag, "id": trimmed], operation: "play")
 
         let urlText = payload.str("url") ?? ""
@@ -245,14 +269,23 @@ final class NodeClient {
 
     // MARK: - 底层请求
 
-    private func makeURL(api: String, operation: String?, query: [String: String]) -> URL? {
+    /// 站点必须能查到它所属源的服务地址，否则这个源的运行时不在
+    private func requireBase(_ site: SiteInfo) throws -> String {
+        guard let base = base(for: site.sourceId) else {
+            CatyLog.shared.warn("site", "源 \(site.sourceId) 没有本地服务地址（未启动？）")
+            throw CatyError.runtimeDown
+        }
+        return base
+    }
+
+    private func makeURL(base: String, api: String, operation: String?, query: [String: String]) -> URL? {
         var path = api.hasPrefix(NodeRoute.scheme) ? String(api.dropFirst(NodeRoute.scheme.count)) : api
         if !path.hasPrefix("/") { path = "/" + path }
         if let operation, !operation.isEmpty {
             while path.hasSuffix("/") { path.removeLast() }
             path += "/" + operation
         }
-        var components = URLComponents(string: serviceBase + path)
+        var components = URLComponents(string: base + path)
         if !query.isEmpty {
             components?.queryItems = query
                 .filter { !$0.value.isEmpty }
@@ -263,9 +296,9 @@ final class NodeClient {
     }
 
     /// 统一的请求入口：GET 带 query，POST 带 JSON body
-    private func request(_ method: String, api: String, query: [String: String],
+    private func request(base: String, _ method: String, api: String, query: [String: String],
                          body: [String: Any]?, operation: String? = nil) async throws -> [String: Any] {
-        guard let url = makeURL(api: api, operation: operation, query: query) else {
+        guard let url = makeURL(base: base, api: api, operation: operation, query: query) else {
             CatyLog.shared.warn("site", "无法拼接 URL：api=\(api) op=\(operation ?? "-")")
             throw CatyError.requestFailed
         }

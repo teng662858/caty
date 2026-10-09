@@ -1,12 +1,15 @@
 //
 //  RuntimeCoordinator.swift
-//  多源编排（P3）：源清单 → 取包（下载/校验/缓存）→ 启动 → 状态上报
+//  多源编排（P3 起；2026-10-10 改成**一个 Node 进程跑多个源**）
 //
-//  ⚠️ 启动策略（受 iOS 硬约束，docs/00 §6）：**同一时刻只激活一个源**
-//   - 有已启用的源 → 取包 → 启动它
-//   - 没有源        → 启动打桩 bundle（P2 自检链路照旧可用）
-//   - 导入/切换源后需要**重启 App** 才生效（node_start 不可重入）
-//  "单 Node 实例承载多个 bundle" 的方案等 M1 真机数据出来再定，不在 P3 硬做。
+//  ⚠️ 两条约束决定了这里的形状：
+//   1. iOS 上 node_start 不可重入：一个进程只能起一次 Node（见 NodeRuntime 文件头）。
+//   2. 但 bootstrap.js 支持在同一个进程里**依次 start 多个 bundle**，并开了控制口 /ctl/source。
+//  → 所以"已取到包的源全部一起启动"，每个源一个本地端口；首页的源列表就是所有源的站点并集，
+//    **切换源是秒切**（用户 2026-10-10 反馈："同类 APP 不用关 App 就能换源"）。
+//  → 之后新开启一个源（或者某个源要重试）也走控制口，**同样不需要重启 App**。
+//
+//  取包失败/契约不支持的源不会挡住其它源（逐个 try，失败的记在记录里）。
 //
 
 import Foundation
@@ -35,8 +38,12 @@ final class RuntimeCoordinator: ObservableObject {
     @Published private(set) var activeBundleMD5: String?
     @Published private(set) var lastMessage: String?
     @Published private(set) var records: [SourceRecord] = []
-    /// 站点目录（运行时 /config 映射而来，不落库）
+    /// 站点目录 = **所有正在运行的源**的站点并集（每个站点都带自己的 sourceId）
     @Published private(set) var sites: [SiteInfo] = []
+    /// 正在运行的源 id（设置页用它显示"运行中"）
+    @Published private(set) var runningSourceIds: Set<String> = []
+    /// 每个源给用户看的状态文案（sourceId → "运行中 94 站点" / 失败原因）
+    @Published private(set) var sourceNotes: [String: String] = [:]
 
     let runtime = NodeRuntime()
     /// 运行时就绪后才有值；HomeView/BrowseView 用它取数
@@ -47,6 +54,9 @@ final class RuntimeCoordinator: ObservableObject {
     private var started = false
     private var importing = false
     private var cancellables: Set<AnyCancellable> = []
+    /// sourceId → 该源的站点目录（切源时不必重新拉）
+    private var sitesBySource: [String: [SiteInfo]] = [:]
+    private var sourcesById: [String: SourceRecord] = [:]
 
     init() {
         // 嵌套的 ObservableObject 不会自动把变化传给外层（runtime 的 @Published 不会刷新观察本类的界面），
@@ -56,13 +66,14 @@ final class RuntimeCoordinator: ObservableObject {
             .store(in: &cancellables)
     }
 
-    /// 提示文案：导入/删除源之后必须重启 App 才生效
-    static let restartHint = "改动要重启 App 才生效（iOS 上一个进程只能启动一次 Node）"
+    /// 提示文案：还有哪些改动要重启才生效
+    static let restartHint = "取包/新增源的改动要重启 App 才生效（iOS 上一个进程只能启动一次 Node）"
 
     // MARK: - 启动
 
     func refreshRecords() {
         records = store.all()
+        sourcesById = Dictionary(uniqueKeysWithValues: records.map { ($0.id, $0) })
     }
 
     func start() async {
@@ -70,12 +81,22 @@ final class RuntimeCoordinator: ObservableObject {
         started = true
         refreshRecords()
 
-        // 运行时就绪（serverStarted）→ 立刻拉站点目录
+        // 运行时就绪（每有一个源起来就会更新一次）→ 按源拉站点目录
+        runtime.$sourceBases
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] bases in
+                guard let self else { return }
+                Task { await self.syncSites(bases: bases) }
+            }
+            .store(in: &cancellables)
+
         runtime.$state
             .receive(on: DispatchQueue.main)
             .sink { [weak self] state in
-                guard let self, state == .ready else { return }
-                Task { await self.loadSites() }
+                guard let self else { return }
+                if state == .ready { self.phase = .ready }
+                if state == .failed { self.phase = .failed }
+                if state == .exited { self.phase = .failed }
             }
             .store(in: &cancellables)
 
@@ -88,28 +109,35 @@ final class RuntimeCoordinator: ObservableObject {
             return
         }
 
-        // 挨个试已启用的源：列表里只要有**一个**能用就启动它
-        // （否则一个坏源排在前面，会把后面能用的源全挡住）
+        // 挨个取包（缓存命中就秒过）；失败/契约不支持的跳过，不挡别的源
+        var specs: [SourceSpec] = []
+        var seenMD5 = Set<String>()
         for source in enabled {
-            if await launch(source) { return }
+            guard let spec = await prepare(source, dedupe: &seenMD5) else { continue }
+            specs.append(spec)
         }
-        lastMessage = "已启用的源都取包失败 —— 已回退到打桩源；修好后在「源」页点「重试取包」"
-        CatyLog.shared.error("site", "所有已启用的源都取包失败，回退打桩源")
-        runtime.bootstrapStub()
+        refreshRecords()
+
+        guard !specs.isEmpty else {
+            phase = .failed
+            lastMessage = "已启用的源都取包失败 —— 已回退到打桩源；修好后在「源」页点「重试取包」"
+            CatyLog.shared.error("site", "所有已启用的源都取包失败，回退打桩源")
+            runtime.bootstrapStub()
+            return
+        }
+
+        activeSourceName = sourcesById[specs[0].id]?.displayName
+        phase = .launching
+        lastMessage = "启动 \(specs.count) 个源…"
+        CatyLog.shared.info("site", "启动 \(specs.count) 个源：\(specs.map(\.id).joined(separator: ", "))")
+        runtime.launch(sources: specs)
     }
 
-    /// 返回 true 表示这个源成功启动
-    @discardableResult
-    private func launch(_ source: SourceRecord) async -> Bool {
-        activeSourceName = source.displayName
-        phase = .checking
-        lastMessage = nil
-
+    /// 取包（下载/校验/缓存）→ 拿到可启动的 spec；返回 nil 表示这个源这次起不来
+    private func prepare(_ source: SourceRecord, dedupe seenMD5: inout Set<String>) async -> SourceSpec? {
+        phase = .downloading
         do {
-            phase = .downloading
             let result = try await bundles.ensureBundle(for: source)
-            activeBundleMD5 = String(result.indexMD5.prefix(12))
-
             var record = source
             record.lastIndexMD5 = result.indexMD5
             record.lastConfigMD5 = result.configMD5
@@ -118,100 +146,157 @@ final class RuntimeCoordinator: ObservableObject {
             record.lastError = nil
 
             guard result.contractKind == BundleStore.contractB else {
-                phase = .unsupported
-                lastMessage = "这是 \(result.contractKind) 型的源，当前版本只支持宿主集成型（contract-b）"
-                record.lastError = lastMessage
+                record.lastError = "这是 \(result.contractKind) 型的源，当前版本只支持宿主集成型（contract-b）"
                 store.upsert(record)
-                refreshRecords()
-                CatyLog.shared.error("site", "拒绝启动：\(lastMessage ?? "")")
-                return false
+                sourceNotes[source.id] = "契约不支持"
+                CatyLog.shared.error("site", "跳过 \(source.displayName)：\(record.lastError ?? "")")
+                return nil
             }
 
             store.upsert(record)
-            refreshRecords()
+            activeBundleMD5 = activeBundleMD5 ?? String(result.indexMD5.prefix(12))
 
-            phase = .launching
-            runtime.launch(sourceId: source.id,
-                           index: result.indexFile,
-                           config: result.configFile,
-                           dataRoot: result.dataRoot)
-            lastMessage = result.reused
-                ? "缓存命中，未重新下载"
-                : "已下载并校验通过（\(result.bytes / 1024) KB）"
-            CatyLog.shared.info("site", lastMessage ?? "")
-            return true
+            // 同一份 bundle（镜像源）只起一份，别白占内存
+            if seenMD5.contains(result.indexMD5) {
+                sourceNotes[source.id] = "与另一个源是同一份 bundle → 合并（切换时用同一个实例）"
+                CatyLog.shared.info("site", "\(source.displayName) 与已启动的源是同一份 bundle，不再重复启动")
+                return nil
+            }
+            seenMD5.insert(result.indexMD5)
+
+            lastMessage = "\(source.displayName)：\(result.reused ? "缓存命中" : "已下载 \(result.bytes / 1024) KB")"
+            sourceNotes[source.id] = result.reused ? "缓存命中，启动中…" : "已下载，启动中…"
+            return SourceSpec(id: source.id,
+                              index: result.indexFile,
+                              config: result.configFile,
+                              dataRoot: result.dataRoot)
         } catch {
-            phase = .failed
-            let reason = error.localizedDescription
             var record = source
-            record.lastError = reason
+            record.lastError = error.localizedDescription
             record.lastCheckedAt = Date()
             store.upsert(record)
-            refreshRecords()
-            CatyLog.shared.error("site", "\(source.displayName) 取包失败：\(reason)")
-            lastMessage = "\(source.displayName) 取包失败：\(reason)"
-            return false
+            sourceNotes[source.id] = error.localizedDescription
+            CatyLog.shared.error("site", "\(source.displayName) 取包失败：\(error.localizedDescription)")
+            return nil
         }
     }
 
-    /// 重试某个源的取包（「源」页的「重试」按钮）
+    // MARK: - 站点目录（每个源各拉一次，按记录顺序合并）
+
+    @MainActor
+    private func syncSites(bases: [String: String]) async {
+        guard let primary = runtime.serviceBase else { return }
+        if client == nil {
+            client = NodeClient(serviceBase: primary)
+        }
+        guard let client else { return }
+
+        runningSourceIds = Set(bases.keys)
+        var merged: [SiteInfo] = []
+        // 顺序：先按源清单里的顺序，再补上不在清单里的（例如打桩源 dev-stub）
+        let known = records.map(\.id).filter { bases[$0] != nil }
+        let extra = bases.keys.filter { id in !records.contains { $0.id == id } }.sorted()
+        for id in known + extra {
+            guard let base = bases[id] else { continue }
+            client.setBase(base, for: id)
+            if sitesBySource[id] == nil {
+                do {
+                    let mapped = try await client.configSites(sourceId: id)
+                    sitesBySource[id] = mapped
+                    CatyLog.shared.info("site", "\(sourcesById[id]?.displayName ?? id) 站点目录：\(mapped.count) 个")
+                } catch {
+                    sitesBySource[id] = []
+                    CatyLog.shared.warn("site", "\(sourcesById[id]?.displayName ?? id) 站点目录失败：\(error.localizedDescription)")
+                }
+            }
+            let list = sitesBySource[id] ?? []
+            sourceNotes[id] = list.isEmpty ? "运行中（站点目录为空）" : "运行中 · \(list.count) 个站点"
+            merged.append(contentsOf: list)
+        }
+        // 已经不在运行的源：清掉它的站点，别让首页点进去报"运行时未运行"
+        for id in Array(sitesBySource.keys) where bases[id] == nil {
+            sitesBySource[id] = nil
+            client.removeBase(for: id)
+            if sourcesById[id]?.enabled == true { sourceNotes[id] = "未运行" }
+        }
+        sites = merged
+        if sites.isEmpty {
+            lastMessage = "站点目录还没就绪（等源起来）"
+        } else {
+            lastMessage = "共 \(sites.count) 个站点，来自 \(runningSourceIds.count) 个源"
+        }
+    }
+
+    // MARK: - 开关 / 重试（运行期即时生效，不用重启 App）
+
+    /// 开关一个源：开 → 取包（缓存命中就秒）→ 走控制口启动它；关 → 停掉它的本地服务
+    @MainActor
+    func setSourceEnabled(_ id: String, _ enabled: Bool) async {
+        guard var record = store.record(id: id) else { return }
+        record.enabled = enabled
+        store.upsert(record)
+        refreshRecords()
+
+        if !enabled {
+            if runningSourceIds.contains(id) {
+                _ = await runtime.stopSource(id)
+                runningSourceIds.remove(id)
+                sitesBySource[id] = nil
+                client?.removeBase(for: id)
+                sites = records.compactMap { sitesBySource[$0.id] }.flatMap { $0 }
+                sourceNotes[id] = "已停用（内存要等重启 App 才彻底释放）"
+            } else {
+                sourceNotes[id] = "已停用"
+            }
+            CatyLog.shared.info("site", "源 \(id) 已停用")
+            return
+        }
+
+        // 打开：Node 还没起来过（例如打桩模式）→ 只能重启
+        guard runtime.launchCount > 0, runtime.controlBase != nil else {
+            sourceNotes[id] = "已开启 → 重启 App 后生效"
+            lastMessage = "「\(record.displayName)」已开启，重启 App 后生效"
+            return
+        }
+
+        var seen = Set<String>()
+        guard let spec = await prepare(record, dedupe: &seen) else { return }
+        if let address = await runtime.startSource(spec) {
+            CatyLog.shared.info("site", "\(record.displayName) 已运行期启动 → \(address)")
+            client?.setBase(address, for: id)
+            runningSourceIds.insert(id)
+            if let client {
+                do {
+                    let mapped = try await client.configSites(sourceId: id)
+                    sitesBySource[id] = mapped
+                    sourceNotes[id] = "运行中 · \(mapped.count) 个站点"
+                } catch {
+                    sitesBySource[id] = []
+                    sourceNotes[id] = "启动成功，但站点目录取不到：\(error.localizedDescription)"
+                }
+            }
+            sites = records.compactMap { sitesBySource[$0.id] }.flatMap { $0 }
+            lastMessage = "「\(record.displayName)」已启动，可以直接用了"
+        } else {
+            sourceNotes[id] = runtime.sourceErrors[id] ?? "启动失败（看诊断日志）"
+            lastMessage = "「\(record.displayName)」启动失败"
+        }
+    }
+
+    /// 重试某个源的取包（「源」页的「重试」按钮）——现在成功就能**直接跑起来**，不用重启
     @MainActor
     func retrySource(_ id: String) async {
         guard let record = store.record(id: id) else { return }
         refreshRecords()
-
-        if runtime.launchCount == 0 {
-            // Node 还没启动过：直接按正常流程走（成功就起它）
-            await launch(record)
-            return
-        }
-
-        // Node 已经起来了（多半是打桩源）：只能验证包能不能取到，并提示重启
-        phase = .downloading
-        do {
-            let result = try await bundles.ensureBundle(for: record)
+        await setSourceEnabled(id, true)
+        if sourceNotes[id]?.hasPrefix("运行中") == true {
+            phase = .ready
+        } else if runtime.launchCount == 0 {
             var updated = record
-            updated.lastIndexMD5 = result.indexMD5
-            updated.lastConfigMD5 = result.configMD5
-            updated.lastContractKind = result.contractKind
-            updated.lastCheckedAt = Date()
             updated.lastError = nil
             store.upsert(updated)
-            activeBundleMD5 = String(result.indexMD5.prefix(12))
-            phase = .ready
-            lastMessage = "包已就绪（bundle \(String(result.indexMD5.prefix(12)))…）→ 重启 App 后生效"
-        } catch {
-            var updated = record
-            updated.lastError = error.localizedDescription
-            updated.lastCheckedAt = Date()
-            store.upsert(updated)
-            phase = .failed
-            lastMessage = "重试仍失败：\(error.localizedDescription)"
-            CatyLog.shared.warn("site", "重试失败：\(error.localizedDescription)")
-        }
-        refreshRecords()
-    }
-
-    // MARK: - 站点目录
-
-    /// 从本地 Node 服务的 /config 拉站点（P4 起首页靠它）
-    @MainActor
-    func loadSites() async {
-        guard let base = runtime.serviceBase else {
-            CatyLog.shared.warn("site", "运行时还没给出服务地址，跳过拉站点目录")
-            return
-        }
-        let client = NodeClient(serviceBase: base)
-        self.client = client
-        do {
-            let mapped = try await client.configSites(sourceId: runtime.activeSourceId)
-            sites = mapped
-            lastMessage = "站点目录：\(mapped.count) 个站点"
-            CatyLog.shared.info("site", "站点目录就绪：\(mapped.map(\.name).joined(separator: "、"))")
-        } catch {
-            sites = []
-            lastMessage = "站点目录失败：\(error.localizedDescription)"
-            CatyLog.shared.warn("site", "拉站点目录失败：\(error.localizedDescription)")
+            refreshRecords()
+            lastMessage = "包已就绪 → 重启 App 后生效"
         }
     }
 
@@ -274,7 +359,8 @@ final class RuntimeCoordinator: ObservableObject {
 
             refreshRecords()
             activeBundleMD5 = String(result.indexMD5.prefix(12))
-            lastMessage = "导入成功：站点目录要重启 App 后才会加载（\(result.reused ? "复用本机已有副本" : "已下载 \(result.bytes / 1024) KB")）"
+            sourceNotes[record.id] = "已导入 · 点开关即可启动（不用重启）"
+            lastMessage = "导入成功：打开它的开关就能用（\(result.reused ? "复用本机已有副本" : "已下载 \(result.bytes / 1024) KB")）"
             return nil
         } catch {
             record.lastError = error.localizedDescription
@@ -286,15 +372,18 @@ final class RuntimeCoordinator: ObservableObject {
     }
 
     func delete(id: String) {
+        if runningSourceIds.contains(id) {
+            Task { _ = await runtime.stopSource(id) }
+        }
+        sitesBySource[id] = nil
+        sourceNotes[id] = nil
         store.remove(id: id)
         refreshRecords()
+        sites = records.compactMap { sitesBySource[$0.id] }.flatMap { $0 }
     }
 
     func setEnabled(_ id: String, _ enabled: Bool) {
-        guard var record = store.record(id: id) else { return }
-        record.enabled = enabled
-        store.upsert(record)
-        refreshRecords()
-        CatyLog.shared.info("store", "源 \(id) enabled=\(enabled)（重启 App 后生效）")
+        // 兼容老调用：走同一条即时生效的路径
+        Task { await setSourceEnabled(id, enabled) }
     }
 }

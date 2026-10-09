@@ -1,9 +1,10 @@
 //
 //  SourceManageView.swift
-//  源管理（P3 临时版）：导入订阅地址 / 看清单 / 启停 / 删除
+//  源管理：导入订阅地址 / 看清单 / **即时启停** / 删除
 //
-//  P5 会按 docs/02-ui-spec.md 重做（含二维码扫描、Web 面板入口）；
-//  现在只求"能导入、能看见、能删"。
+//  2026-10-10 起：开关是**即时生效**的（不再"改了要重启 App"）——
+//  已经在跑的源之间切换本来就是秒切（所有已开启的源一起跑，首页站点列表是并集）；
+//  新开一个源走运行时的控制口（/ctl/source）现场启动，也不用重启。
 //
 
 import SwiftUI
@@ -73,7 +74,11 @@ struct SourceManageView: View {
                 Circle().fill(phaseColor).frame(width: 12, height: 12)
                 Text(coordinator.phase.label).font(.headline)
                 Spacer()
-                if let name = coordinator.activeSourceName {
+                if coordinator.runningSourceIds.count > 1 {
+                    Text("\(coordinator.runningSourceIds.count) 个源同时在跑")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                } else if let name = coordinator.activeSourceName {
                     Text(name).font(.footnote).foregroundStyle(.secondary)
                 }
             }
@@ -83,9 +88,9 @@ struct SourceManageView: View {
             if let message = coordinator.lastMessage {
                 Text(message).font(.footnote).foregroundStyle(.secondary)
             }
-            Text(RuntimeCoordinator.restartHint)
+            Text("开关即时生效：已开启的源会**同时运行**，在首页左上角随时切换，不用重启 App。")
                 .font(.footnote)
-                .foregroundStyle(.orange)
+                .foregroundStyle(.secondary)
         }
     }
 
@@ -123,7 +128,7 @@ struct SourceManageView: View {
                 Text(errorText).font(.footnote).foregroundStyle(.red)
             }
 
-            Text("导入时会立刻下载并做 MD5 校验；地址里的账号密码只进 Keychain，不写进文件。")
+            Text("导入时会立刻下载并做 MD5 校验；地址里的账号密码只进 Keychain，不写进文件。导入完点它的开关即可使用。")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
         }
@@ -151,10 +156,11 @@ struct SourceManageView: View {
                 VStack(alignment: .leading, spacing: 3) {
                     HStack {
                         Text(record.displayName).font(.headline)
+                        runningBadge(record)
                         Spacer()
                         Toggle("", isOn: Binding(
                             get: { record.enabled },
-                            set: { coordinator.setEnabled(record.id, $0) }
+                            set: { value in Task { await coordinator.setSourceEnabled(record.id, value) } }
                         ))
                         .labelsHidden()
                     }
@@ -166,6 +172,9 @@ struct SourceManageView: View {
                         + (record.mirrors.isEmpty ? "" : "   镜像 \(record.mirrors.count) 个"))
                         .font(.caption2)
                         .foregroundStyle(.secondary)
+                    if let note = coordinator.sourceNotes[record.id], record.enabled {
+                        Text(note).font(.caption2).foregroundStyle(.secondary)
+                    }
                     if let error = record.lastError {
                         Text(error).font(.caption2).foregroundStyle(.red)
                         Button {
@@ -181,6 +190,19 @@ struct SourceManageView: View {
                     Button("删除", role: .destructive) { coordinator.delete(id: record.id) }
                 }
             }
+        }
+    }
+
+    @ViewBuilder
+    private func runningBadge(_ record: SourceRecord) -> some View {
+        if coordinator.runningSourceIds.contains(record.id) {
+            Text("运行中")
+                .font(.caption2)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(Color.green.opacity(0.18))
+                .foregroundStyle(.green)
+                .clipShape(Capsule())
         }
     }
 }

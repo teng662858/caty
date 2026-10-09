@@ -27,7 +27,7 @@ enum CatyError: String, Error, LocalizedError {
         case .noSource: return "还没有导入源"
         case .downloadFailed: return "下载失败，请检查网络或换镜像"
         case .md5Mismatch: return "校验不通过，已丢弃本次内容"
-        case .unauthorized: return "源站拒绝了账号密码（401）：检查订阅地址里的 user:pass 有没有写错"
+        case .unauthorized: return "源站拒绝了账号密码（401）：这个源需要商家给你的账号，地址要写成 http://账号:密码@域名/index.js.md5；如果本来就不该用它，左滑删掉即可"
         case .unsupportedContract: return "不支持的源契约（缺少宿主标记）"
         case .runtimeLaunchFailed: return "源启动失败"
         case .bridgeTimeout: return "运行时准备中"

@@ -83,8 +83,15 @@ PeekPili / 魔力云播 / 蚂蚁影视 共用同一套格式），App 下载 →
     **模拟器片只有 arm64**（没有 Intel 模拟器片）；sha256 = `991283d8579eee225142da2bf4a897dd7d831e8b5a496a1f247fca665bc1d705`。
     国内直连 GitHub release 约 16 KB/s，用 `https://gh-proxy.com/<原URL>` 可到 ~1 MB/s。
 12. **iOS 上 `node_start` 不可重入**：一个进程只能起一个 Node 实例，也没有 `child_process`；Node 挂了只能重启 App。
-    → 状态机里的"自动退避重启（1s/3s/9s）"在 iOS 上改为"进程级重启"，多源先用"同一时刻只激活一个源"
-    （docs/00 §6 的多 bundle 方案待 M1 真机数据再定）。
+    ✅ **但"只能起一次 Node"≠"只能用一个源"（2026-10-10 已实现多源）**：`bootstrap.js` 支持
+    `node bootstrap.js <spec.json>` 一次性**依次 start 多个 bundle**（每个源独立 dataRoot + 独立端口 +
+    独立 catServerFactory 认领），并开了**控制口** `GET /ctl/status` / `POST /ctl/source` / `POST /ctl/stop`
+    （127.0.0.1 + `X-CatVod-Token`）→ **运行期就能追加/停掉一个源，换源不用关 App**（用户点名的诉求）。
+    两个必须记住的坑：① 同一个 index.js 只能 require 一次（模块缓存）→ 同文件要跑第二份实例必须
+    先复制到该源自己的数据目录再加载（bootstrap 已自动做）；② 环境变量与 cwd 是进程级的 →
+    每个源 start 之前才设 HOME + chdir。App 侧：`NodeRuntime.sourceBases`（每个源的地址）+
+    `NodeClient` 按 sourceId 分发 + `RuntimeCoordinator` 把**所有已启用的源一起跑**，站点目录是并集。
+    细节与实测见 `docs/contract-notes.md §9`。
 13. **编译缓存的两个坑**：① 必须带 `NODE_COMPILE_CACHE_PORTABLE=1`（iOS 容器路径含 UUID，不加会静默全 miss）；
     ② `NODE_COMPILE_CACHE` 必须在 `node_start` **之前**由宿主 `setenv`（环境变量只在 Environment 创建时读一次）。
     另：iOS 上要按机型设 `--max-old-space-size`（App 侧按物理内存 1/3、封顶 1.5 GB 自动算）。
@@ -155,6 +162,13 @@ PeekPili / 魔力云播 / 蚂蚁影视 共用同一套格式），App 下载 →
   播放器（进度记忆/倍速/上下集/全屏弹出）、片库（收藏+历史）、设置（配置中心/诊断/清缓存）
 - 真机联调修过的坑：桥连接生命周期、桥与 bundle 的监听自愈、跳集（导航栈堆积→改全屏弹出）、
   海报不整齐、SwiftUI 表达式过深导致类型检查超时
+- **2026-10-10 第二轮（用户 5 个新诉求）已做**：
+  · **换源不用关 App**：一个 Node 进程同时跑所有已启用的源（bootstrap 多源 + 控制口），
+    设置页开关即时生效；首页站点列表按源分组，随时秒切
+  · 首页左上角源名**加粗加大一号**；**去掉**导航栏中间重复的源名
+  · 详情页"收藏 / 继续观看"改成**单独一行**（以前挤在海报右边，长名字会折行、对不齐）
+  · 设置页源的 401 红字改成可操作文案（要商家给的账号；不用就左滑删）
+  · 播放：AVPlayer 失败原因**说清楚**（item.error + errorLog 最后一条 + 后缀提示）；libmpv 内核仍是下一步
 - **2026-10-10 用户报的 4 件事已修**（等下一版 ipa）：
   · 「有些站点打不开」→ 根因是**没调 `POST /init`**（见事实 18），已修；顺带把源的报错原文透出到界面
   · 播放页可以手势返回：画面**下滑**关闭 / **左边缘右滑**返回
@@ -191,6 +205,7 @@ gh run download <id> -n Caty-unsigned-ipa -D dist/ipa && cp dist/ipa/Caty-unsign
 | `tools/host/bootstrap.js` | **启动契约**实现（含编译缓存优化）—— 已逐字节同步到 `ios/Resources/bootstrap.js`，**两边必须一致** | 同 bootstrap 用途 |
 | `tools/host/p2-selftest.mjs` | **P2 链路桌面预演**：用 iOS 那份 `bootstrap.js` + 打桩 bundle 跑通 `serverStarted → /config → 站点映射` | ✅ 不下载、不执行第三方代码 |
 | `tools/probe/site-probe.mjs` | **单站点探测**：用缓存里的 bundle 起真源，对指定站点依次打 `init → home → category → detail → search → play`，打印状态码/耗时/上游地址/源日志。站点打不开时先用它 | ⚠️ 执行第三方代码（你已缓存并校验过的源） |
+| `tools/probe/multi-source-test.mjs` | **多源桌面测试**：一个 Node 进程跑两个真源 + 用控制口运行期追加第三个源（验收"换源不重启"） | ⚠️ 执行第三方代码 |
 | `tools/probe/src-session.mjs` | **常驻真源会话**：起好后不退出，你可以用 curl 打任意路由，同时全部日志实时输出（排查/手工试接口用） | ⚠️ 同上 |
 | `tools/probe/bootstrap-trace.js` | 排查用的 bootstrap 包装：把源的**每一次出站 HTTP 请求**打出来（配合 src-session 的 `--bootstrap` 用） | ⚠️ 同上 |
 | `tools/check-swift-heuristics.mjs` | Swift 粗略自查（Windows 无编译器时兜底）：括号平衡 / 中文引号 / 冲突标记 / 行数总览 | ✅ 只读 |

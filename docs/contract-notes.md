@@ -150,3 +150,72 @@ node bootstrap.js <index.js> <index.config.js> <dataRoot> <bridgePort> <token>
 
 1. `node tools/probe/site-probe.mjs --sites <key>`：先看 `init` 的 `siteUrl` 是不是个"像样的域名"；
 2. 再看 `[FastSiteUrl] … selected …` 那行；3 再看 home/category 的状态码与源给的 message。
+
+---
+
+## 9. 多源同进程 + 控制口（2026-10-10 实现，用户诉求：换源不要关 App）
+
+> 背景：iOS 上 `node_start` 不可重入（一个进程只能起一次 Node），别人的 App 却能随手换源。
+> 答案不是"重启 Node"，而是**让这一个 Node 进程同时跑多个 bundle**。
+
+### 9.1 启动契约（新增用法 B，用法 A 保留兼容）
+
+```
+# A（老的单源形式，桌面工具/自检还在用）
+node bootstrap.js <index.js> <index.config.js> <dataRoot> <bridgePort> <token>
+
+# B（多源 + 控制口，App 用这个）
+node bootstrap.js <spec.json>
+spec.json = { "bridgePort": 12345, "token": "…",
+              "sources": [ { "id": "…", "index": "…/index.js",
+                             "config": "…/index.config.js", "dataRoot": "…" } ] }
+```
+
+bootstrap 现在做的事（在原来六条基础上扩了三条）：
+
+1. `globalThis.catServerFactory` **按"正在启动的源"认领** server —— 每个源的 server 各自记在案，
+   所以多源之间互不串台；每个源监听成功后单独回报 `sourceStarted {id, address}`
+   （老的 `serverStarted` 照旧发一份，兼容桌面工具与自检屏）。
+2. **监听自愈按源各自维护**（iOS 挂起会把 socket 收走 → 同端口原地重绑，每个源一份）。
+3. **控制口**（我们自己的 HTTP 服务，只有下面三个动作，127.0.0.1 + `X-CatVod-Token`）：
+
+| 方法 | 路径 | 作用 |
+|---|---|---|
+| GET | `/ctl/status` | 列出所有源与它们的地址/是否在监听 |
+| POST | `/ctl/source` | **运行期启动一个源**（body = 一个 source spec）→ 返回它的服务地址 |
+| POST | `/ctl/stop` | 关掉某个源的本地服务（代码与定时器要等 App 重启才彻底回收） |
+
+启动成功后通过桥回报 `controlReady {address}`，宿主就知道控制口在哪。
+
+### 9.2 两个坑（都踩过）
+
+1. **同一个 `index.js` 只能 require 一次**（Node 模块缓存）→ 第二次 require 拿到同一个模块实例，
+   而 bundle 的 `start()` 大多带"只跑一次"的保护 → **第二个源根本起不来**（表现为
+   `start() 返回了，但始终没有监听任何端口`）。
+   对策：这份文件已经加载过时，先把它**复制**到新源自己的数据目录（`.caty-bundle.index.js`）
+   再用新路径加载 → 两个真正独立的实例（镜像源、运行期追加源都靠这条）。
+2. **环境变量与 cwd 是进程级的**：每个源在**自己 start 之前**才设 `HOME` + `chdir(自己的 dataRoot)`；
+   bundle 在 start 期间读 cwd/HOME 决定数据目录，之后就绑定了。
+
+### 9.3 桌面实测（`tools/probe/multi-source-test.mjs`）
+
+```
+src1  /config 200  42 个站点   http://127.0.0.1:64435   （B 家族 9.7 MB bundle）
+src2  /config 200  94 个站点   http://127.0.0.1:63552   （A 家族 6.5 MB bundle）
+跨源取内容：虎斑|4K（在 src2 上） init 130ms → home 94ms  → 7 个分类
+运行期追加源：POST /ctl/source → 200 366ms → 新源 http://127.0.0.1:63568
+GET /ctl/status → 在跑 3 个：src1, src2, late-added
+```
+
+自检也覆盖了这条链路：`node tools/host/p2-selftest.mjs`（打桩 bundle 起两份 + 控制口追加一份）。
+
+### 9.4 App 侧对应实现
+
+- `NodeRuntime`：`launch(sources: [SourceSpec])` 写 `sources-spec.json` → `node_start`
+  只带这一个参数；`@Published sourceBases`（sourceId → 本地地址）、`controlBase`、
+  `sourceErrors`；`startSource(_:)` / `stopSource(_:)` 走控制口。
+- `NodeClient`：不再只有 `serviceBase`，而是**按 sourceId 分发**（`setBase(_:for:)`），
+  每个站点的请求都送到它所属那个源；`init` 缓存键 = 源地址 + 站点 key。
+- `RuntimeCoordinator`：启动时把**所有已启用的源**一起拉起来（同一份 bundle 的镜像只起一份），
+  站点目录是并集（每个站点带 `sourceId`）；设置页的开关**即时生效**——
+  开→走 `/ctl/source` 现场启动，关→走 `/ctl/stop`。

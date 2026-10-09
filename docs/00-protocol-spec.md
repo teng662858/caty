@@ -358,10 +358,13 @@ node:zlib(2) tty(2) os(2) tls(1) node:tls(1) node:stream/web(1) node:perf_hooks(
 ## 6. 程序的生命周期与隔离
 
 - Android 侧：bundle 跑在**独立 Service + 独立进程**里（`NodeService`），异常即 `killProcess`
-- iOS 侧没有这个奢侈：**一个 App 进程内通常只能起一个 Node 实例**
-  → 设计取舍：**单 Node 实例承载多个 bundle**（自研 bootstrap 支持循环 `require` 多个 bundle，
-  每个 bundle 独立 data 目录 + 独立 bridge 端口 + 独立 `catServerFactory`），或"同一时刻只激活一个源"。
-  **这一条必须在 M1/M2 用真机验证后再定架构。**
+- iOS 侧没有这个奢侈：**一个 App 进程内只能起一个 Node 实例**（`node_start` 不可重入）。
+  ✅ **已定案并实现（2026-10-10）：单 Node 实例承载多个 bundle** —— 自研 `bootstrap.js` 的"用法 B"
+  （`node bootstrap.js <spec.json>`）依次 start 多个 bundle，每个 bundle 独立 data 目录 + 独立监听端口
+  + 独立 `catServerFactory` 认领；另外开一个**控制口**（`/ctl/status`、`/ctl/source`、`/ctl/stop`，
+  回环 + token）支持**运行期**追加/停掉源 —— 于是"换源"是秒切，不用重启 App。
+  实测与两个坑（require 模块缓存必须复制 bundle；env/cwd 是进程级的要逐源设）见 `docs/contract-notes.md §9`。
+  内存上仍建议"同时最多跑 2–3 个源"（每个 bundle 几 MB 代码 + 运行时状态），所以默认只跑**已启用**的源。
 - bundle 崩溃/退出后要能自动重启（引用实现有 restart 排程与退避，并有"重启次数耗尽"状态）
 - 宿主应定期健康检查本地服务（`/versioning` 或 `/config` 探活），失效则重启
 

@@ -16,7 +16,8 @@ struct HomeView: View {
     @ObservedObject var coordinator: RuntimeCoordinator
     @ObservedObject private var library = LibraryStore.shared
 
-    @State private var siteKey: String?
+    /// 当前选中的站点：用 SiteInfo.id（= sourceId|key）——多源同时跑时 key 可能重名
+    @State private var siteId: String?
     @State private var categories: [Category] = []
     @State private var categoryFilters: [String: [FilterGroup]] = [:]
     @State private var tid: String?
@@ -32,8 +33,8 @@ struct HomeView: View {
     private let systemKeys: Set<String> = ["douban", "gengxin", "baseset", "mypan"]
 
     private var currentSite: SiteInfo? {
-        guard let siteKey else { return nil }
-        return coordinator.sites.first { $0.key == siteKey }
+        guard let siteId else { return nil }
+        return coordinator.sites.first { $0.id == siteId }
     }
 
     private var currentFilters: [FilterGroup] {
@@ -51,7 +52,7 @@ struct HomeView: View {
                 }
                 .padding(.top, Theme.spacingS)
             }
-            .navigationTitle(currentSite?.name ?? "Caty")
+            .navigationTitle("")
             .navigationBarTitleDisplayMode(.inline)
             .navigationDestination(for: VodItem.self) { item in
                 DetailView(item: item, site: currentSite, client: coordinator.client)
@@ -62,9 +63,9 @@ struct HomeView: View {
             }
             .toolbar { toolbar }
             .sheet(isPresented: $showSourcePicker) {
-                SourcePickerSheet(sites: coordinator.sites, currentKey: siteKey) { site in
-                    guard site.key != siteKey else { return }
-                    siteKey = site.key
+                SourcePickerSheet(groups: sourceGroups, currentId: siteId) { site in
+                    guard site.id != siteId else { return }
+                    siteId = site.id
                     library.settings.defaultSiteKey = site.key
                     Task { await loadSite() }
                 }
@@ -73,6 +74,20 @@ struct HomeView: View {
             .onChange(of: coordinator.sites.count) { _, _ in
                 Task { await bootstrapIfNeeded(force: true) }
             }
+        }
+    }
+
+    /// 站点按"来自哪个源"分组（多源同时跑时，源列表就是这个并集）
+    private var sourceGroups: [SourcePickerSheet.Group] {
+        var order: [String] = []
+        var buckets: [String: [SiteInfo]] = [:]
+        for site in coordinator.sites {
+            if buckets[site.sourceId] == nil { order.append(site.sourceId) }
+            buckets[site.sourceId, default: []].append(site)
+        }
+        return order.map { id in
+            let name = coordinator.records.first { $0.id == id }?.displayName ?? id
+            return SourcePickerSheet.Group(id: id, name: name, sites: buckets[id] ?? [])
         }
     }
 
@@ -123,10 +138,11 @@ struct HomeView: View {
             Button {
                 showSourcePicker = true
             } label: {
-                HStack(spacing: 4) {
+                HStack(spacing: 5) {
                     Image(systemName: "rectangle.stack")
                     Text(currentSite?.name ?? "选择源")
-                        .font(.subheadline)
+                        .font(.headline)
+                        .fontWeight(.bold)
                         .lineLimit(1)
                 }
             }
@@ -138,7 +154,7 @@ struct HomeView: View {
             } label: {
                 Image(systemName: "arrow.clockwise")
             }
-            .disabled(loading || siteKey == nil)
+            .disabled(loading || siteId == nil)
         }
     }
 
@@ -209,13 +225,13 @@ struct HomeView: View {
     @MainActor
     private func bootstrapIfNeeded(force: Bool = false) async {
         guard !coordinator.sites.isEmpty else { return }
-        if !force, siteKey != nil { return }
-        if siteKey == nil {
+        if !force, siteId != nil { return }
+        if siteId == nil {
             let preferred = library.settings.defaultSiteKey.flatMap { key in
                 coordinator.sites.first { $0.key == key }
             }
             let fallback = coordinator.sites.first { !systemKeys.contains($0.key) } ?? coordinator.sites.first
-            siteKey = (preferred ?? fallback)?.key
+            siteId = (preferred ?? fallback)?.id
         }
         await loadSite()
     }
@@ -287,14 +303,20 @@ struct HomeView: View {
     }
 }
 
-// MARK: - 源列表（2 列，用户反馈原菜单太窄）
+// MARK: - 源列表（2 列 + 按源分组）
 
-/// 这个源实测有 90+ 个站点，原来的下拉菜单一行一个、只能看半截名字；
-/// 改成弹窗里 2 列铺开，一眼能看全。
+/// 每个源实测有几十个站点，原来的下拉菜单一行一个、只能看半截名字；
+/// 改成弹窗里 2 列铺开，并按"来自哪个源"分组（多源同时跑时这是必需的）。
 private struct SourcePickerSheet: View {
 
-    let sites: [SiteInfo]
-    let currentKey: String?
+    struct Group: Identifiable {
+        let id: String
+        let name: String
+        let sites: [SiteInfo]
+    }
+
+    let groups: [Group]
+    let currentId: String?
     let onPick: (SiteInfo) -> Void
 
     @Environment(\.dismiss) private var dismiss
@@ -304,23 +326,36 @@ private struct SourcePickerSheet: View {
         GridItem(.flexible(), spacing: Theme.spacingM)
     ]
 
+    private var total: Int { groups.reduce(0) { $0 + $1.sites.count } }
+
     var body: some View {
         NavigationStack {
             ScrollView {
-                LazyVGrid(columns: columns, spacing: Theme.spacingM) {
-                    ForEach(sites) { site in
-                        Button {
-                            onPick(site)
-                            dismiss()
-                        } label: {
-                            cell(site)
+                ForEach(groups) { group in
+                    VStack(alignment: .leading, spacing: Theme.spacingS) {
+                        HStack(spacing: 6) {
+                            Text(group.name).font(.subheadline).fontWeight(.semibold)
+                            Text("\(group.sites.count) 个站点")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
                         }
-                        .buttonStyle(.plain)
+                        LazyVGrid(columns: columns, spacing: Theme.spacingM) {
+                            ForEach(group.sites) { site in
+                                Button {
+                                    onPick(site)
+                                    dismiss()
+                                } label: {
+                                    cell(site)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
                     }
+                    .padding(.bottom, Theme.spacingM)
                 }
                 .padding(Theme.padding)
             }
-            .navigationTitle("选择源（\(sites.count)）")
+            .navigationTitle("选择站点（\(total)）")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
@@ -331,7 +366,7 @@ private struct SourcePickerSheet: View {
     }
 
     private func cell(_ site: SiteInfo) -> some View {
-        let isOn = site.key == currentKey
+        let isOn = site.id == currentId
         return HStack(spacing: 6) {
             Text(site.name)
                 .font(.subheadline)

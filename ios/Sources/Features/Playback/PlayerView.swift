@@ -168,7 +168,12 @@ struct PlayerView: View {
                 Text(errorText).font(.footnote).foregroundStyle(.red)
             }
             if let lastError = engine.lastError {
-                Text("播放器：\(lastError)").font(.caption2).foregroundStyle(.orange)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("播放器：\(lastError)").font(.caption).foregroundStyle(.orange)
+                    if let hint = engine.formatHint {
+                        Text(hint).font(.caption2).foregroundStyle(.secondary)
+                    }
+                }
             }
         }
     }

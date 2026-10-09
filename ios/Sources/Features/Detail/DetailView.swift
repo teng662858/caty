@@ -102,25 +102,29 @@ struct DetailView: View {
 
     private var headerSection: some View {
         Section {
-            HStack(alignment: .top, spacing: Theme.spacingM) {
-                PosterImage(urlString: item.pic)
-                    .frame(width: 100, height: 150)
-                    .clipShape(RoundedRectangle(cornerRadius: Theme.posterRadius))
+            VStack(alignment: .leading, spacing: Theme.spacingM) {
+                HStack(alignment: .top, spacing: Theme.spacingM) {
+                    PosterImage(urlString: item.pic)
+                        .frame(width: 100, height: 150)
+                        .clipShape(RoundedRectangle(cornerRadius: Theme.posterRadius))
 
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(item.name).font(.headline).lineLimit(3)
-                    if let remarks = item.remarks {
-                        Text(remarks).font(.caption).foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(item.name).font(.headline).lineLimit(3)
+                        if let remarks = item.remarks {
+                            Text(remarks).font(.caption).foregroundStyle(.secondary)
+                        }
+                        if let meta = metaLine {
+                            Text(meta).font(.caption2).foregroundStyle(.secondary)
+                        }
+                        if let actor = detail?.actor, !actor.isEmpty {
+                            Text("主演：\(actor)").font(.caption2).foregroundStyle(.secondary).lineLimit(3)
+                        }
                     }
-                    if let meta = metaLine {
-                        Text(meta).font(.caption2).foregroundStyle(.secondary)
-                    }
-                    if let actor = detail?.actor, !actor.isEmpty {
-                        Text("主演：\(actor)").font(.caption2).foregroundStyle(.secondary).lineLimit(2)
-                    }
-                    actions
+                    Spacer(minLength: 0)
                 }
-                Spacer(minLength: 0)
+                // ⚠️ 这几个按钮**单独占一行**（2026-10-10 用户反馈"继续观看的字位置不对"）：
+                // 以前它们挤在海报右边那一栏里，字一长就折成两行、跟海报对不齐
+                actions
             }
             .padding(.vertical, 4)
         }
@@ -143,7 +147,8 @@ struct DetailView: View {
             } label: {
                 Label(library.isFavorite(item) ? "已收藏" : "收藏",
                       systemImage: library.isFavorite(item) ? "heart.fill" : "heart")
-                    .font(.caption)
+                    .font(.subheadline)
+                    .lineLimit(1)
             }
             .buttonStyle(.bordered)
             .tint(library.isFavorite(item) ? .pink : Theme.accent)
@@ -154,7 +159,8 @@ struct DetailView: View {
                     present(index: record.episodeIndex)
                 } label: {
                     Label("继续观看 \(record.episodeName)", systemImage: "play.circle")
-                        .font(.caption)
+                        .font(.subheadline)
+                        .lineLimit(1)
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(Theme.accent)
@@ -163,10 +169,13 @@ struct DetailView: View {
             if item.isFolder {
                 NavigationLink(value: FolderTarget(site: effectiveSite, tid: item.id, title: item.name)) {
                     Label("进入目录", systemImage: "folder")
-                        .font(.caption)
+                        .font(.subheadline)
+                        .lineLimit(1)
                 }
                 .buttonStyle(.bordered)
             }
+
+            Spacer(minLength: 0)
         }
         .padding(.top, 2)
     }

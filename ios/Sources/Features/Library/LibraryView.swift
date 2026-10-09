@@ -116,8 +116,10 @@ struct LibraryView: View {
     // MARK: - 工具
 
     /// 从当前站点目录里找回站点信息（收藏/历史只存了 key）
+    /// ⚠️ 多源同时跑时，不同源可能有同名 key 的站点 → 先按 (key, sourceId) 精确匹配
     private func site(for item: VodItem) -> SiteInfo? {
-        coordinator.sites.first { $0.key == item.siteKey }
+        coordinator.sites.first { $0.key == item.siteKey && $0.sourceId == item.sourceId }
+            ?? coordinator.sites.first { $0.key == item.siteKey }
     }
 
     private static func timeText(_ seconds: Double) -> String {

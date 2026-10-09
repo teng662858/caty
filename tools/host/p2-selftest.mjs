@@ -174,5 +174,105 @@ try {
 
 child.kill()
 bridge.close()
-console.log(allOk ? '\n✓ P2 链路自检通过' : '\n✗ P2 链路自检失败')
+
+// 6) 多源模式（2026-10-10 新增）：同一份打桩 bundle 起两份（走 spec.json），
+//    验证"一个 Node 进程跑多个源"和"控制口在运行期追加源"这两条路
+console.log('\n--- 多源模式（spec.json + 控制口）---')
+let multiOk = true
+try {
+  const TOKEN2 = randomBytes(16).toString('hex')
+  const bridgePort2 = await freePort()
+  const bases = new Map()
+  let controlBase2 = null
+  const bridge2 = http.createServer((req, res) => {
+    if (req.method !== 'POST' || !req.url.startsWith('/msg')) return res.writeHead(404).end()
+    if (req.headers['x-catvod-token'] !== TOKEN2) return res.writeHead(403).end()
+    let body = ''
+    req.on('data', (c) => (body += c))
+    req.on('end', () => {
+      res.writeHead(200, { 'content-type': 'application/json' }).end('{}')
+      let msg
+      try { msg = JSON.parse(body) } catch { return }
+      if (msg.action === 'sourceStarted') {
+        bases.set(msg.opt.id, msg.opt.address)
+      } else if (msg.action === 'controlReady') {
+        controlBase2 = msg.opt.address
+      } else if (msg.action === 'sourceError') {
+        console.log(`  ✗ sourceError ${msg.opt.id}: ${msg.opt.message}`)
+      }
+    })
+  })
+  await new Promise((r) => bridge2.listen(bridgePort2, '127.0.0.1', r))
+
+  const dataA = join(DATA, 'multi-a')
+  const dataB = join(DATA, 'multi-b')
+  for (const dir of [dataA, dataB, join(dataA, 'late')]) {
+    mkdirSync(dir, { recursive: true })
+  }
+  for (const dir of [dataA, dataB]) {
+    copyFileSync(STUB_INDEX, join(dir, 'index.js'))
+    copyFileSync(STUB_CONFIG, join(dir, 'index.config.js'))
+  }
+  const specPath = join(DATA, 'multi-spec.json')
+  writeFileSync(specPath, JSON.stringify({
+    bridgePort: bridgePort2,
+    token: TOKEN2,
+    sources: [
+      { id: 'stub-a', index: join(dataA, 'index.js'), config: join(dataA, 'index.config.js'), dataRoot: dataA },
+      { id: 'stub-b', index: join(dataB, 'index.js'), config: join(dataB, 'index.config.js'), dataRoot: dataB },
+    ],
+  }, null, 2))
+
+  const multiChild = spawn(process.execPath, [BOOTSTRAP, specPath], { stdio: ['ignore', 'pipe', 'pipe'] })
+  multiChild.stdout.on('data', (c) => {
+    for (const line of String(c).split('\n')) if (line.includes('[bootstrap]')) console.log(`  [源] ${line.trim()}`)
+  })
+
+  const waitFor = async (check, ms, label) => {
+    const started = Date.now()
+    while (Date.now() - started < ms) {
+      if (check()) return true
+      await new Promise((r) => setTimeout(r, 200))
+    }
+    console.log(`  ✗ 等待超时：${label}`)
+    return false
+  }
+
+  if (!(await waitFor(() => bases.size >= 2 && controlBase2, TIMEOUT, '两个源 + 控制口'))) {
+    multiOk = false
+  } else {
+    for (const [id, base] of bases) {
+      const res = await fetch(`${base}/config`, { headers: { 'User-Agent': 'okhttp/3.15.0' } })
+      const json = await res.json().catch(() => null)
+      const count = json?.video?.sites?.length ?? 0
+      const ok = res.status === 200 && count > 0
+      if (!ok) multiOk = false
+      console.log(`  ${ok ? '✓' : '✗'} ${id} GET /config → ${res.status}  ${count} 个站点  ${base}`)
+    }
+    // 控制口：运行期追加第三个源（换源不重启 App 的那条路）
+    const added = await fetch(`${controlBase2}/ctl/source`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'X-CatVod-Token': TOKEN2 },
+      body: JSON.stringify({ id: 'stub-late', index: join(dataA, 'index.js'),
+                             config: join(dataA, 'index.config.js'), dataRoot: join(dataA, 'late') }),
+    })
+    const addedJson = await added.json().catch(() => null)
+    const ok = added.status === 200 && Boolean(addedJson?.address)
+    if (!ok) multiOk = false
+    console.log(`  ${ok ? '✓' : '✗'} POST /ctl/source（运行期追加源）→ ${added.status} ${addedJson?.address || ''}`)
+    const status = await fetch(`${controlBase2}/ctl/status`, { headers: { 'X-CatVod-Token': TOKEN2 } })
+    const statusJson = await status.json().catch(() => null)
+    const listening = (statusJson?.sources || []).filter((s) => s.listening).length
+    console.log(`  ${listening >= 3 ? '✓' : '✗'} GET /ctl/status → ${status.status}  在跑 ${listening} 个`)
+    if (listening < 3) multiOk = false
+  }
+  multiChild.kill()
+  bridge2.close()
+} catch (error) {
+  multiOk = false
+  console.log(`  ✗ 多源自检异常：${error.message}`)
+}
+if (!multiOk) allOk = false
+
+console.log(allOk ? '\n✓ P2 链路自检通过（含多源）' : '\n✗ P2 链路自检失败')
 process.exit(allOk ? 0 : 1)

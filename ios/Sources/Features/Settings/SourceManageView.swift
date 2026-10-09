@@ -134,6 +134,13 @@ struct SourceManageView: View {
                         .foregroundStyle(.secondary)
                     if let error = record.lastError {
                         Text(error).font(.caption2).foregroundStyle(.red)
+                        Button {
+                            Task { await coordinator.retrySource(record.id) }
+                        } label: {
+                            Label("重试取包", systemImage: "arrow.clockwise")
+                                .font(.caption)
+                        }
+                        .buttonStyle(.borderless)
                     }
                 }
                 .swipeActions {

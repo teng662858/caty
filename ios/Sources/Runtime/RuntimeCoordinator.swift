@@ -130,14 +130,56 @@ final class RuntimeCoordinator: ObservableObject {
             CatyLog.shared.info("site", lastMessage ?? "")
         } catch {
             phase = .failed
-            lastMessage = error.localizedDescription
+            let reason = error.localizedDescription
             var record = source
-            record.lastError = error.localizedDescription
+            record.lastError = reason
             record.lastCheckedAt = Date()
             store.upsert(record)
             refreshRecords()
-            CatyLog.shared.error("site", "取包失败：\(error.localizedDescription)")
+            CatyLog.shared.error("site", "取包失败：\(reason)")
+
+            // 回退到打桩源：否则 Node 一次都不启动，整个 App 是死的（用户会以为坏了）
+            lastMessage = "源取包失败：\(reason) —— 已回退到打桩源；修好后在「源」页点「重试」"
+            runtime.bootstrapStub()
         }
+    }
+
+    /// 重试某个源的取包（「源」页的「重试」按钮）
+    @MainActor
+    func retrySource(_ id: String) async {
+        guard let record = store.record(id: id) else { return }
+        refreshRecords()
+
+        if runtime.launchCount == 0 {
+            // Node 还没启动过：直接按正常流程走（成功就起它）
+            await launch(record)
+            return
+        }
+
+        // Node 已经起来了（多半是打桩源）：只能验证包能不能取到，并提示重启
+        phase = .downloading
+        do {
+            let result = try await bundles.ensureBundle(for: record)
+            var updated = record
+            updated.lastIndexMD5 = result.indexMD5
+            updated.lastConfigMD5 = result.configMD5
+            updated.lastContractKind = result.contractKind
+            updated.lastCheckedAt = Date()
+            updated.lastError = nil
+            store.upsert(updated)
+            activeBundleMD5 = String(result.indexMD5.prefix(12))
+            phase = .ready
+            lastMessage = "包已就绪（bundle \(String(result.indexMD5.prefix(12)))…）→ 重启 App 后生效"
+        } catch {
+            var updated = record
+            updated.lastError = error.localizedDescription
+            updated.lastCheckedAt = Date()
+            store.upsert(updated)
+            phase = .failed
+            lastMessage = "重试仍失败：\(error.localizedDescription)"
+            CatyLog.shared.warn("site", "重试失败：\(error.localizedDescription)")
+        }
+        refreshRecords()
     }
 
     // MARK: - 站点目录

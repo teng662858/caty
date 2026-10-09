@@ -71,8 +71,10 @@ final class BundleStore {
     /// 确保这个源的 bundle 可用：能复用就复用，否则下载 → 校验 → 原子提交
     func ensureBundle(for source: SourceRecord) async throws -> EnsureResult {
         let parsed = try SubscriptionParser.parse(source.url)
-        let authorization = KeychainStore.get(account: source.id)
-            .map { SubscriptionParser.basicAuthHeader(credentials: $0) }
+        let storedCredentials = KeychainStore.get(account: source.id)
+        let authorization = storedCredentials.map { SubscriptionParser.basicAuthHeader(credentials: $0) }
+        CatyLog.shared.info("store",
+            "检查更新：\(SourceRecord.mask(source.url))  凭据=\(authorization == nil ? "无" : "有（\(storedCredentials?.count ?? 0) 字符）")")
 
         let root = try CatyPaths.bundlesRoot(source.id)
         let active = root.appendingPathComponent("active", isDirectory: true)
@@ -193,10 +195,17 @@ final class BundleStore {
 
     private func remoteMD5(_ url: URL, authorization: String?) async throws -> String {
         let response = try await fetch(url, limit: Self.maxMD5Bytes, authorization: authorization)
-        guard (200..<300).contains(response.status) else { throw CatyError.downloadFailed }
+        let head = String(decoding: response.data.prefix(200), as: UTF8.self)
+            .replacingOccurrences(of: "\n", with: " ")
+            .trimmingCharacters(in: .whitespaces)
+        guard (200..<300).contains(response.status) else {
+            // 把状态码与响应开头记下来：401=凭据没带上；403/503 且正文有 cf/challenge=被 Cloudflare 拦
+            CatyLog.shared.warn("store", "\(url.lastPathComponent) HTTP \(response.status)  正文前 200 字：\(head)")
+            throw CatyError.downloadFailed
+        }
         let text = String(decoding: response.data, as: UTF8.self)
         guard let md5 = Self.firstMD5(in: text) else {
-            CatyLog.shared.warn("store", "\(url.lastPathComponent) 里没有 32 位 MD5")
+            CatyLog.shared.warn("store", "\(url.lastPathComponent) 里没有 32 位 MD5；正文前 200 字：\(head)")
             throw CatyError.downloadFailed
         }
         return md5

@@ -58,7 +58,12 @@ struct PlayerView: View {
             engine.stop()
         }
         .onReceive(ticker) { _ in tick() }
-        .onReceive(NotificationCenter.default.publisher(for: .AVPlayerItemDidPlayToEndTime)) { _ in
+        .onReceive(NotificationCenter.default.publisher(for: .AVPlayerItemDidPlayToEndTime)) { notification in
+            // ⚠️ 这个通知是**全局**的：必须确认是自己的当前条目发的，
+            // 否则别的播放器（或上一集残留）播完都会触发"自动下一集"，
+            // 一旦某集秒失败就会连环跳到最后一集（真机踩过）。
+            guard let finished = notification.object as? AVPlayerItem,
+                  finished === engine.player.currentItem else { return }
             playNext(auto: true)
         }
     }
@@ -192,11 +197,19 @@ struct PlayerView: View {
     }
 
     private func playNext(auto: Bool) {
-        if index + 1 < episodes.count {
-            switchTo(index + 1)
-        } else if auto {
-            engine.pause()
+        guard index + 1 < episodes.count else {
+            if auto { engine.pause() }
+            return
         }
+        // 自动下一集只认"真的看到结尾"（时长合理且进度接近末尾），
+        // 避免播放失败/秒退时连环跳集 —— 手动点下一集不受此限制
+        if auto {
+            guard duration > 30, position > duration * 0.9 else {
+                CatyLog.shared.info("player", "忽略自动下一集（duration=\(Int(duration))s position=\(Int(position))s）")
+                return
+            }
+        }
+        switchTo(index + 1)
     }
 
     private func seek(by seconds: Double) {
@@ -236,7 +249,11 @@ struct PlayerView: View {
                 let target = record.positionSec
                 position = target
                 Task {
-                    try? await Task.sleep(nanoseconds: 800_000_000)
+                    // 等播放器真的就绪再跳：在缓冲阶段 seek 容易造成音画错位
+                    for _ in 0..<25 {
+                        if engine.player.currentItem?.status == .readyToPlay { break }
+                        try? await Task.sleep(nanoseconds: 200_000_000)
+                    }
                     engine.seek(to: target)
                     CatyLog.shared.info("player", "断点续播：从 \(Int(target))s 继续")
                 }

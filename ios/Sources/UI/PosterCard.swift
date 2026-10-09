@@ -13,23 +13,30 @@ struct PosterImage: View {
     let urlString: String?
 
     var body: some View {
-        Group {
-            if let urlString, let url = URL(string: urlString) {
-                AsyncImage(url: url, transaction: Transaction(animation: .easeIn(duration: 0.15))) { phase in
-                    switch phase {
-                    case .success(let image):
-                        image.resizable().scaledToFill()
-                    case .failure:
-                        placeholder(systemName: "photo")
-                    default:
-                        placeholder(systemName: "ellipsis")
-                    }
+        // 固定 2:3 的盒子：不管图片自身多大，格子永远一样大 → 网格整齐
+        Rectangle()
+            .fill(Color.secondary.opacity(0.12))
+            .aspectRatio(Theme.posterAspect, contentMode: .fit)
+            .overlay { content }
+            .clipped()
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        if let urlString, let url = URL(string: urlString) {
+            AsyncImage(url: url, transaction: Transaction(animation: .easeIn(duration: 0.15))) { phase in
+                switch phase {
+                case .success(let image):
+                    image.resizable().scaledToFill()
+                case .failure:
+                    placeholder(systemName: "photo")
+                default:
+                    placeholder(systemName: "ellipsis")
                 }
-            } else {
-                placeholder(systemName: "film")
             }
+        } else {
+            placeholder(systemName: "film")
         }
-        .background(Color.secondary.opacity(0.12))
     }
 
     private func placeholder(systemName: String) -> some View {
@@ -52,8 +59,6 @@ struct PosterCard: View {
         VStack(alignment: .leading, spacing: 5) {
             ZStack(alignment: .bottomTrailing) {
                 PosterImage(urlString: item.pic)
-                    .aspectRatio(Theme.posterAspect, contentMode: .fill)
-                    .frame(maxWidth: .infinity)
                     .clipShape(RoundedRectangle(cornerRadius: Theme.posterRadius))
 
                 if showRemarks, let remarks = item.remarks, !remarks.isEmpty {
@@ -61,12 +66,14 @@ struct PosterCard: View {
                         .padding(4)
                 }
             }
+            // reservesSpace：片名一行还是两行都占两行高度 → 每格高度一致
             Text(item.name)
                 .font(.caption)
-                .lineLimit(2)
+                .lineLimit(2, reservesSpace: true)
                 .multilineTextAlignment(.leading)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 

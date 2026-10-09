@@ -50,6 +50,7 @@ final class AVPlayerEngine: ObservableObject {
         currentTitle = title
         currentURL = url
         lastError = nil
+        prepareAudioSession()
 
         let asset: AVURLAsset
         if headers.isEmpty {
@@ -58,9 +59,25 @@ final class AVPlayerEngine: ObservableObject {
             asset = AVURLAsset(url: url, options: ["AVURLAssetHTTPHeaderFieldsKey": headers])
             CatyLog.shared.info("player", "带 \(headers.count) 个请求头播放（防盗链）")
         }
-        player.replaceCurrentItem(with: AVPlayerItem(asset: asset))
+        let item = AVPlayerItem(asset: asset)
+        // 音画同步：让系统用时间域算法处理变速，避免变调/错位
+        item.audioTimePitchAlgorithm = .timeDomain
+        player.replaceCurrentItem(with: item)
         CatyLog.shared.info("player", "开始播放：\(url.absoluteString)")
         play()
+    }
+
+    /// 播放前把音频会话配好（顺带支持后台音频）
+    private func prepareAudioSession() {
+        #if os(iOS)
+        do {
+            let session = AVAudioSession.sharedInstance()
+            try session.setCategory(.playback, mode: .moviePlayback)
+            try session.setActive(true)
+        } catch {
+            CatyLog.shared.warn("player", "音频会话配置失败：\(error.localizedDescription)")
+        }
+        #endif
     }
 
     func play() {

@@ -219,3 +219,56 @@ GET /ctl/status → 在跑 3 个：src1, src2, late-added
 - `RuntimeCoordinator`：启动时把**所有已启用的源**一起拉起来（同一份 bundle 的镜像只起一份），
   站点目录是并集（每个站点带 `sourceId`）；设置页的开关**即时生效**——
   开→走 `/ctl/source` 现场启动，关→走 `/ctl/stop`。
+
+---
+
+## 10. 弹幕契约 + libmpv 内核（P6，2026-10-10）
+
+### 10.1 弹幕（A 家族实测）
+
+| 接口 | 说明 |
+|---|---|
+| `GET <源地址>/danmu/auto?name=<剧名>&episode=<集>` | 返回 **B 站风格 XML**：`<i><d p="时间,模式,字号,颜色,时间戳,池,用户,ID">文本</d>…</i>`。实测《庆余年》第 1 集 **3.2 MB / 数万条** → 解析必须放后台线程 |
+| `GET <源地址>/danmusearch?keyword=<片名>` | 源自己的**弹幕搜索网页**（给 WebView 用） |
+| `GET <源地址>/danmusearch/api/search?keyword=<片名>` | 搜索候选剧集（JSON：`data.danmuapi.data[{Id,Name,source,cover}]`） |
+| `POST /msg {action:"getPlayInfo"}` | 源**等宿主回答**"现在播什么"：回复体要给 `{title, episodeName, flag, fileName}`；给不出来它会打 `[Danmaku] auto skipped: empty title` 直接跳过弹幕 |
+| `POST /msg {action:"danmuPush", opt:{url}}` | 源把它构造好的弹幕地址推给宿主（宿主去取那个 URL 即可） |
+
+宿主侧实现：`DanmakuService`（拉取+解析+缓存）、`DanmakuOverlay`（Canvas 按进度滚动，不建 View）、
+`PlaybackContext`（播放页写、桥读）、控制条"弹"开关 + 设置里的总开关（默认关）。
+
+### 10.2 libmpv 内核（MPVKit）
+
+- 包：`mpvkit/MPVKit` 的 LGPL 预编译 `.xcframework`（28 个组件：libmpv + ffmpeg + libass + libplacebo + MoltenVK …）。
+  下载脚本 `ios/scripts/fetch-mpvkit.sh`（清单与 sha256 来自它的 `Package.swift`），
+  由 `project.yml` 的 `options.preGenCommand` 在生成工程前跑（**不用改 CI 文件**，绕开令牌缺 workflow 权限的限制）。
+- ⚠️ **别用 SwiftPM 拉它**：28 个二进制包并发下载会稳定报 `already exists in file system`。
+- ⚠️ 手接静态库必须自己补链接项：`-lc++`（MoltenVK/uchardet 要 C++ 运行时）、
+  `VideoToolbox / AVFoundation / CoreAudio / CoreMedia / CoreVideo / CoreFoundation / Metal / Security / UIKit`、
+  `-lz -lbz2 -liconv -lresolv -lexpat -lxml2`。
+- 渲染：**CAMetalLayer 交给 mpv**（`mpv_set_option(mpv,"wid",…)` + `vo=gpu-next` + `gpu-api=vulkan` + `gpu-context=moltenvk`），
+  mpv 负责解码后的缩放、字幕、HDR 色调映射 —— 宿主不写渲染循环。
+  MoltenVK 两个 workaround（drawableSize 被设 1x1、HDR 的 wantsExtendedDynamicRangeContent 必须在主线程设）
+  见 `MPVVideoLayer`；App 切后台 `vid=no`、回前台 `vid=auto`（否则回前台黑屏）。
+- 内核选择：`PlaybackController`（自动 / 系统 / mpv）。自动模式下系统内核报错会自动切 mpv 重播同一个地址，
+  并在界面给一条提示 + 一个"用 mpv 内核再试一次"的按钮。
+
+### 10.3 源体检（`tools/probe/source-audit.mjs`）
+
+对 5 个源 262 个站点跑过一轮（逐个 `init → home → category`，可选 `--pic-check` 真抓封面）：
+
+| 源 | 站点 | 可用 | 空返回 | 报错 |
+|---|---|---|---|---|
+| 9280.kstore.vip（A 家族） | 94 | 79 | 8 | 7 |
+| lmentor（B 家族） | 42 | 15 | 19 | 8 |
+| smdl | 48 | 11 | 28 | 9 |
+| XPTV | 20 | 3 | 4 | 13 |
+| douer | 58 | 17 | 24 | 17 |
+
+结论：**"打不开"绝大多数在源侧**，宿主无能为力，只能把原因说清楚：
+- `getaddrinfo ENOTFOUND <域名>` → 站点上游域名已失效（源没更新）
+- `请先在 Web 后台填写…/需要登录` → 要先去**源的配置中心**登录/填账号（App 已把这句话原样显示）
+- `timeout of 10000/20000ms exceeded` → 上游太慢或被墙（XPTV 那批成人站基本都要梯子）
+- `Cannot read properties of undefined` / `Dynamic spider handler not found` → 源自己的 bug
+- `站点或操作不存在` / 无分类 → 有的站点是**搜索型**（"搜索|xxx"）或首页型，本来就没有分类列表
+  （App 已改成提示"这是搜索型站点，去搜索页用它"，不再误报"取不到内容"）

@@ -647,5 +647,6 @@ private struct EpisodeChip: View {
             .foregroundStyle(selected ? Theme.accent : Color.primary)
             .clipShape(RoundedRectangle(cornerRadius: 10))
             .contentShape(RoundedRectangle(cornerRadius: 10))
+            .animation(.easeInOut(duration: 0.15), value: selected)
     }
 }

@@ -138,6 +138,22 @@ PeekPili / 魔力云播 / 蚂蚁影视 共用同一套格式），App 下载 →
     同时：**真源 500 时带的 message 一定要显示给用户**（`timeout of 15000ms exceeded` 这类），
     别再吞成"请求失败"。细节见 `docs/contract-notes.md §8`。
 
+19. **libmpv 播放内核（P6，2026-10-10 接入）**：用 `mpvkit/MPVKit` 的 LGPL **预编译 xcframework**（28 个组件，
+    LGPL 目标 `_MPVKit + _FFmpeg`）。接入要点：
+    ① **不要走 SwiftPM**：它并发下载那 28 个二进制包会**稳定**报 `"already exists in file system"`（实测两次都失败）
+       → 改成 `ios/scripts/fetch-mpvkit.sh`（按 Package.swift 的清单 + sha256 校验下载解压），
+       由 `project.yml` 的 `options.preGenCommand` 在 `xcodegen generate` 前触发（这样不用改 CI 文件）。
+    ② 手接静态库要自己补 **系统框架与库**：`-lc++`（少了报 `___cxa_throw`）、
+       `VideoToolbox`（少了报一堆 `kVTCompressionPropertyKey_*`）、AVFoundation/CoreAudio/CoreMedia/CoreVideo/Metal 等。
+    ③ 渲染：**建一个 CAMetalLayer，用 `wid` 选项交给 mpv**，再设 `vo=gpu-next + gpu-api=vulkan + gpu-context=moltenvk`，
+       mpv 自己画（含字幕/缩放/HDR 色调映射）→ 我们不用写渲染循环。MoltenVK 两个 workaround（drawableSize 1x1、
+       wantsExtendedDynamicRangeContent 必须在主线程）见 `MPVPlayerEngine.swift`；App 切后台要 `vid=no` 再回 `vid=auto`。
+    ④ 内核选择在 `PlaybackController`：自动 / 系统 / mpv，系统内核失败会自动切 mpv 重播同一地址。
+
+20. **弹幕契约（A 家族实测）**：`GET <源地址>/danmu/auto?name=<剧名>&episode=<集>` → B 站风格 XML
+    `<i><d p="时间,模式,字号,颜色,…">文本</d></i>`（一集可达 3 MB / 几万条，解析要放后台线程）。
+    另外源会通过 /msg 桥 **await** `getPlayInfo`（宿主必须在**回复体**里给 title/episodeName/flag/fileName，
+    给不出来源就跳过弹幕），再推 `danmuPush{url}`。搜索接口：`/danmusearch/api/search?keyword=`。
 ## 铁律（不可违反）
 
 1. **只做容器**：不内置、不打包、不分发任何内容源；不实现 VIP 解析或 DRM 绕过；**只自签自用**，
@@ -162,6 +178,11 @@ PeekPili / 魔力云播 / 蚂蚁影视 共用同一套格式），App 下载 →
   播放器（进度记忆/倍速/上下集/全屏弹出）、片库（收藏+历史）、设置（配置中心/诊断/清缓存）
 - 真机联调修过的坑：桥连接生命周期、桥与 bundle 的监听自愈、跳集（导航栈堆积→改全屏弹出）、
   海报不整齐、SwiftUI 表达式过深导致类型检查超时
+- **2026-10-10 第四轮：P6 全部做完**：libmpv 内核（MPVKit + MoltenVK 渲染 + 内核选择/自动回退）、
+  播放手势（亮度/音量/横滑快进/长按倍速 + HUD）、直播识别、弹幕（XML 拉取解析 + Canvas 渲染 + 开关）、
+  iPad（宽屏多铺两列）、浅色确认、轻动效；另修：详情页按钮自己画（横竖居中）、
+  控制口"关掉再打开"不再 500（bootstrap entryStarted 复位）、封面相对地址补全 + 自己写图片加载器（Referer/UA + 内存缓存）+ 无封面文字兜底、
+  搜索型站点不再误报"取不到内容"。新增工具：source-audit.mjs（源体检，262 个站点跑过一轮）。
 - **2026-10-10 第三轮（用户 4 个新诉求）已做**：
   · 切换站点卡 → 后台预热（前 12 个站点提前 init）+ 站点分类缓存 + 换源不白屏
   · 详情页两个按钮等宽平分、内容居中（用户："继续观看的字不在蓝色胶囊中间"）

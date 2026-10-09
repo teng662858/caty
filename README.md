@@ -228,6 +228,25 @@ Swift 侧实现 `/msg` 桥收 `serverStarted` → GET `/config` 打印站点列�
 - ✅ 设置页源的 401 红字改成"要商家给的账号 / 不用就左滑删"这种能照做的文案。
 - ✅ 播放失败**说清楚原因**（AVPlayer 的 item.error + errorLog + 后缀提示，mkv 会直接提示需要 mpv 内核）。
 
+**2026-10-10 第四轮：P6 全部做完（用户要求"把 P6 全部做完再出包"）**
+- ✅ **libmpv 播放内核已接进 App**（`mpvkit/MPVKit` 的 LGPL 预编译包，28 个 xcframework，CI 里下载 + sha256 校验）：
+  渲染方式是"把 `CAMetalLayer` 交给 mpv"（`vo=gpu-next + gpu-api=vulkan + gpu-context=moltenvk`），
+  所以 MKV / 2160p / 10bit HDR / 内嵌字幕都归 mpv 管，硬件解码走 VideoToolbox。
+  设置 → 播放 → **播放内核**：自动（推荐，MP4 走系统、MKV 或播不了自动切 mpv）/ 系统 / mpv；
+  播放页报错时还会给一个"用 mpv 内核再试一次"的按钮。
+- ✅ **播放手势**：画面上左半边上下滑=亮度、右半边上下滑=音量、横向滑=快进/快退（带秒数提示）、
+  长按=2 倍速，动作时中间有 HUD；下滑关闭播放页、左边缘右滑返回照旧。
+- ✅ **直播适配**：没有总时长的流判定为直播 → 进度条换成"🔴 直播中"、不参与自动下一集。
+- ✅ **弹幕**：源的 `/danmu/auto?name=&episode=` 返回 B 站风格 XML，App 自己解析
+  （几万条，后台线程）并用 Canvas 按播放进度滚动渲染；桥这边还回答源的 `getPlayInfo`（它靠这个对齐剧名/集号）。
+  控制条上有"弹"开关，设置里有弹幕总开关（默认关）。
+- ✅ **iPad**：允许安装到 iPad，宽屏（iPad / 横屏）海报自动多铺两列。
+- ✅ **浅色模式**：界面全用系统色，本来就正常（只有播放画面是黑的，那是有意的）；选集/选中态补了轻动效。
+
+**已实测（桌面）**：源体检工具 `tools/probe/source-audit.mjs`，对 5 个源共 262 个站点逐个体检：
+9280 可用 79/94、lmentor 15/42、smdl 11/48、XPTV 3/20、douer 17/58；
+报错原因基本都是**源侧**：上游域名失效（ENOTFOUND）、需要去源的配置中心登录/填账号、
+成人站要梯子（超时）、源自身 bug（Cannot read properties of undefined）。
 **下一步（P6）——播放内核（用户问"有些视频播不了、MPV 什么时候做"）**
 1. **结论**：播不了多半是**内核**的事。现在用的系统 AVPlayer：MP4/HLS 没问题，**MKV 封装、
    部分 HEVC/AV1、软解字幕、2160p 高码率**它就不行。要解决就得加 **libmpv** 内核（自带 ffmpeg，

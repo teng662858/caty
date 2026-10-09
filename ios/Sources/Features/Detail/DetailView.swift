@@ -245,6 +245,7 @@ struct DetailView: View {
             .background(watching ? Theme.accent.opacity(0.22) : Color.secondary.opacity(0.12))
             .foregroundStyle(watching ? Theme.accent : Color.primary)
             .clipShape(RoundedRectangle(cornerRadius: 8))
+            .animation(.easeInOut(duration: 0.15), value: watching)
     }
 
     private func playRequest(index: Int, episode: Episode) -> PlayRequest {

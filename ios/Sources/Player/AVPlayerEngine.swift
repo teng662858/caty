@@ -80,10 +80,18 @@ final class AVPlayerEngine: ObservableObject {
         observations.append(item.observe(\.status, options: [.new]) { [weak self] item, _ in
             guard item.status == .failed else { return }
             let basic = item.error?.localizedDescription ?? "未知错误"
-            let detail = item.errorLog()?.events.last?.errorLogMessage
+            var text = basic
+            // errorLog 的最后一条是"为什么播不了"的人话（codec 不支持 / 404 / 网络中断…）
+            if let event = item.errorLog()?.events.last {
+                if let comment = event.errorComment, !comment.isEmpty {
+                    text += "（\(comment)）"
+                } else if event.errorStatusCode != 0 {
+                    text += "（\(event.errorDomain) \(event.errorStatusCode)）"
+                }
+            }
             DispatchQueue.main.async {
                 guard let self else { return }
-                self.setError(detail.map { "\(basic)（\($0)）" } ?? basic)
+                self.setError(text)
             }
         })
     }

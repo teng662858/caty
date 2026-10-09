@@ -73,8 +73,15 @@ final class BundleStore {
         let parsed = try SubscriptionParser.parse(source.url)
         let storedCredentials = KeychainStore.get(account: source.id)
         let authorization = storedCredentials.map { SubscriptionParser.basicAuthHeader(credentials: $0) }
-        CatyLog.shared.info("store",
-            "检查更新：\(SubscriptionParser.mask(source.url))  凭据=\(authorization == nil ? "无" : "有（\(storedCredentials?.count ?? 0) 字符）")")
+        // 只记长度，不记内容（能一眼看出是用户名还是口令打错了）
+        let credentialShape: String
+        if let storedCredentials {
+            let parts = storedCredentials.split(separator: ":", maxSplits: 1, omittingEmptySubsequences: false)
+            credentialShape = "有（用户名 \(parts.first?.count ?? 0) 字符 / 口令 \(parts.count > 1 ? parts[1].count : 0) 字符）"
+        } else {
+            credentialShape = "无"
+        }
+        CatyLog.shared.info("store", "检查更新：\(SubscriptionParser.mask(source.url))  凭据=\(credentialShape)")
 
         let root = try CatyPaths.bundlesRoot(source.id)
         let active = root.appendingPathComponent("active", isDirectory: true)
@@ -199,8 +206,9 @@ final class BundleStore {
             .replacingOccurrences(of: "\n", with: " ")
             .trimmingCharacters(in: .whitespaces)
         guard (200..<300).contains(response.status) else {
-            // 把状态码与响应开头记下来：401=凭据没带上；403/503 且正文有 cf/challenge=被 Cloudflare 拦
+            // 把状态码与响应开头记下来：401=凭据不对/没带上；403/503 且正文有 cf/challenge=被 Cloudflare 拦
             CatyLog.shared.warn("store", "\(url.lastPathComponent) HTTP \(response.status)  正文前 200 字：\(head)")
+            if response.status == 401 || response.status == 403 { throw CatyError.unauthorized }
             throw CatyError.downloadFailed
         }
         let text = String(decoding: response.data, as: UTF8.self)

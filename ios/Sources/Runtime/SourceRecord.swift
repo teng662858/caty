@@ -17,6 +17,7 @@ import CryptoKit
 
 enum CatyError: String, Error, LocalizedError {
     case noSource, downloadFailed, md5Mismatch, unsupportedContract
+    case unauthorized                     // 源站 401/403：账号密码不对（实测 catpaw 会返回 401 Authentication required）
     case runtimeLaunchFailed, bridgeTimeout, configMissing, configInvalid
     case siteEmpty, requestTimeout, requestFailed, decodeFailed
     case playbackUnsupported, proxyRequired, offline, runtimeDown
@@ -26,6 +27,7 @@ enum CatyError: String, Error, LocalizedError {
         case .noSource: return "还没有导入源"
         case .downloadFailed: return "下载失败，请检查网络或换镜像"
         case .md5Mismatch: return "校验不通过，已丢弃本次内容"
+        case .unauthorized: return "源站拒绝了账号密码（401）：检查订阅地址里的 user:pass 有没有写错"
         case .unsupportedContract: return "不支持的源契约（缺少宿主标记）"
         case .runtimeLaunchFailed: return "源启动失败"
         case .bridgeTimeout: return "运行时准备中"

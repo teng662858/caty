@@ -23,6 +23,9 @@ struct RootView: View {
             HomeView(coordinator: coordinator)
                 .tabItem { Label("首页", systemImage: "house") }
 
+            SearchView(coordinator: coordinator)
+                .tabItem { Label("搜索", systemImage: "magnifyingglass") }
+
             SourceManageView(coordinator: coordinator)
                 .tabItem { Label("源", systemImage: "square.stack.3d.up") }
 

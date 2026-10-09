@@ -1,35 +1,44 @@
 //
 //  PlayerView.swift
-//  播放页（P5）：进度记忆 / 断点续播 / 倍速 / 上一集下一集 / 播完自动下一集
+//  播放页（P5 起；P6 加内核切换 + 手势 + 直播适配）
 //
-//  返回手势（2026-10-10 用户反馈"播放页要能返回上一页"）：
-//  全屏弹出没法用手势返回，这里自己加两个——
-//    · 在画面上**向下滑** → 关闭播放页（松手超过阈值就关，跟抖音那套一样）
-//    · **从屏幕左边缘往右滑** → 同样关闭（系统"返回上一页"的手感）
+//  返回手势：在画面上**向下滑**关闭、**从屏幕左边缘往右滑**返回（全屏弹出没有系统返回手势）。
+//
+//  P6 手势（跟着画面走，左侧上下 = 亮度、右侧上下 = 音量、横向 = 快进/快退、长按 = 2 倍速）：
+//   · 只在**没进全屏**时的画面区域生效，和"下滑关闭"用同一套拖拽识别（先判方向再决定动作）
+//   · 亮度用系统亮度（UIScreen.brightness），音量用 MPVolumeView 的滑块（iOS 没有公开的音量 setter）
+//   · 动作过程中画面中间显示一个 HUD（图标 + 当前值/时间），松手 0.8 秒后消失
 //
 
 import SwiftUI
 import AVKit
+import MediaPlayer
+import UIKit
 
 struct PlayerView: View {
 
     let request: PlayRequest
     let client: NodeClient?
 
-    @StateObject private var engine = AVPlayerEngine()
+    @StateObject private var controller = PlaybackController()
     @ObservedObject private var library = LibraryStore.shared
 
     @State private var index: Int
     @State private var rate: Double
     @State private var resolving = true
     @State private var errorText: String?
-    @State private var position: Double = 0
-    @State private var duration: Double = 0
     /// 跟手位移：下滑关闭 / 左边缘返回各一个（用于拖的时候页面跟着动）
     @State private var dragY: CGFloat = 0
     @State private var dragX: CGFloat = 0
     /// 全屏（横屏）播放
     @State private var showFullscreen = false
+    /// 手势 HUD（亮度/音量/快进提示）
+    @State private var hud: GestureHUD?
+    /// 音量（自己记住，因为 iOS 不给读系统音量以外的写入口）
+    @State private var volume: Float = 0.5
+    @State private var brightness: CGFloat = UIScreen.main.brightness
+    @State private var volumeSlider: UISlider?
+    @State private var longPressRate = false
 
     private let ticker = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
@@ -78,36 +87,37 @@ struct PlayerView: View {
         .offset(x: max(0, dragX))
         .simultaneousGesture(backSwipeGesture)
         .fullScreenCover(isPresented: $showFullscreen) {
-            FullscreenPlayerView(engine: engine,
+            FullscreenPlayerView(controller: controller,
                                  episodes: episodes,
                                  currentIndex: index,
                                  rate: rate,
+                                 isLive: controller.isLive,
                                  onSelectEpisode: { switchTo($0) },
                                  onRate: { setRate($0) },
                                  onClose: { showFullscreen = false })
         }
         .task { await resolve() }
+        .onAppear {
+            controller.update(preference: PlayerKernelPreference.from(library.settings.playerKernel), rate: rate)
+            controller.onEnded = { playNext(auto: true) }
+            prepareVolumeSlider()
+        }
+        .onChange(of: library.settings.playerKernel) { _, newValue in
+            controller.update(preference: PlayerKernelPreference.from(newValue), rate: rate)
+        }
         .onDisappear {
             saveProgress(force: true)
-            engine.stop()
+            controller.stop()
         }
         .onReceive(ticker) { _ in tick() }
-        .onReceive(NotificationCenter.default.publisher(for: .AVPlayerItemDidPlayToEndTime)) { notification in
-            // ⚠️ 这个通知是**全局**的：必须确认是自己的当前条目发的，
-            // 否则别的播放器（或上一集残留）播完都会触发"自动下一集"，
-            // 一旦某集秒失败就会连环跳到最后一集（真机踩过）。
-            guard let finished = notification.object as? AVPlayerItem,
-                  finished === engine.player.currentItem else { return }
-            playNext(auto: true)
-        }
     }
 
-    // MARK: - 返回手势
+    // MARK: - 手势
 
     /// 关闭播放页（按钮和手势都走这里）
     private func close() {
         saveProgress(force: true)
-        engine.stop()
+        controller.stop()
         dismiss()
     }
 
@@ -133,22 +143,69 @@ struct PlayerView: View {
             }
     }
 
-    /// 画面上向下滑：只认"竖直向下"的位移，避免和进度条/横向滑动打架
-    private var dismissDragGesture: some Gesture {
+    /// 画面上的拖拽：先判方向 —— 竖直向下=关闭播放页；其余交给亮度/音量/快进
+    private var videoDragGesture: some Gesture {
         DragGesture(minimumDistance: 16)
             .onChanged { value in
-                let dy = value.translation.height
                 let dx = value.translation.width
-                dragY = (dy > 0 && abs(dy) > abs(dx) * 1.2) ? dy : 0
+                let dy = value.translation.height
+                let horizontal = abs(dx) > abs(dy)
+                if horizontal {
+                    dragY = 0
+                    let seconds = Double(dx) / 6.0            // 每 6pt ≈ 1 秒，手指滑一屏 ≈ 90 秒
+                    hud = GestureHUD(kind: .seek, value: seconds,
+                                     text: "\(seconds >= 0 ? "+" : "")\(Int(seconds)) 秒")
+                    controller.seek(to: max(0, min(controller.duration > 0 ? controller.duration - 1
+                                                                          : controller.position + seconds,
+                                                  controller.position + seconds)))
+                    return
+                }
+                if dy > 0 && abs(dy) > abs(dx) * 1.2 {
+                    dragY = dy                                     // 下滑关闭
+                    hud = nil
+                    return
+                }
+                dragY = 0
+                // 左半边调亮度、右半边调音量（和主流播放器一致）
+                let delta = -Double(dy) / 260.0
+                if value.startLocation.x < UIScreen.main.bounds.width / 2 {
+                    brightness = min(1, max(0, brightness + CGFloat(delta)))
+                    UIScreen.main.brightness = brightness
+                    hud = GestureHUD(kind: .brightness, value: Double(brightness),
+                                     text: "\(Int(brightness * 100))%")
+                } else {
+                    volume = min(1, max(0, volume + Float(delta)))
+                    volumeSlider?.value = volume
+                    hud = GestureHUD(kind: .volume, value: Double(volume),
+                                     text: "\(Int(volume * 100))%")
+                }
             }
             .onEnded { value in
                 let dy = value.translation.height
                 if dy > 110 || value.predictedEndTranslation.height > 240 {
+                    hud = nil
                     close()
-                } else {
-                    withAnimation(.spring(response: 0.28, dampingFraction: 0.9)) { dragY = 0 }
+                    return
                 }
+                withAnimation(.spring(response: 0.28, dampingFraction: 0.9)) { dragY = 0 }
+                clearHUDSoon()
             }
+    }
+
+    private func clearHUDSoon() {
+        guard hud != nil else { return }
+        Task {
+            try? await Task.sleep(nanoseconds: 800_000_000)
+            hud = nil
+        }
+    }
+
+    /// iOS 没有公开的"设置系统音量"API，业界做法是拿 MPVolumeView 里那个 UISlider 来用
+    private func prepareVolumeSlider() {
+        let volumeView = MPVolumeView(frame: .zero)
+        volumeSlider = volumeView.subviews.compactMap { $0 as? UISlider }.first
+        volume = volumeSlider?.value ?? AVAudioSession.sharedInstance().outputVolume
+        brightness = UIScreen.main.brightness
     }
 
     // MARK: - 视频区
@@ -156,11 +213,8 @@ struct PlayerView: View {
     private var videoArea: some View {
         ZStack {
             Color.black
-            // 全屏弹出期间这里留黑底：同一时刻只允许一个 VideoPlayer 存在，
-            // 否则两个画面会抢同一个 AVPlayer 的渲染层
-            if !showFullscreen {
-                VideoPlayer(player: engine.player)
-            } else {
+            // 同一时刻只允许一个播放画面存在：全屏时这里留黑底
+            if showFullscreen {
                 Button {
                     showFullscreen = false
                 } label: {
@@ -169,12 +223,42 @@ struct PlayerView: View {
                         .foregroundStyle(.white.opacity(0.8))
                 }
                 .buttonStyle(.plain)
+            } else if controller.active == .system {
+                VideoPlayer(player: controller.av.player)
+            } else {
+                MPVVideoView(engine: controller.mpv)
+            }
+
+            if let hud {
+                GestureHUDView(hud: hud)
+            }
+            if controller.buffering {
+                ProgressView()
+                    .progressViewStyle(.circular)
+                    .tint(.white)
+                    .scaleEffect(1.3)
             }
         }
         .aspectRatio(16.0 / 9.0, contentMode: .fit)
         .frame(maxWidth: .infinity)
+        .contentShape(Rectangle())
+        .gesture(videoDragGesture)
+        .onLongPressGesture(minimumDuration: 0.5) {
+            // 长按临时 2 倍速（松手恢复）
+        } onPressingChanged: { pressing in
+            guard controller.videoAspectReady else { return }
+            if pressing, !longPressRate {
+                longPressRate = true
+                controller.setRate(2.0)
+                hud = GestureHUD(kind: .rate, value: 2.0, text: "2 倍速播放中")
+            } else if !pressing, longPressRate {
+                longPressRate = false
+                controller.setRate(rate)
+                clearHUDSoon()
+            }
+        }
         .overlay(alignment: .bottomTrailing) {
-            if !showFullscreen, engine.currentURL != nil {
+            if !showFullscreen, controller.videoAspectReady {
                 Button {
                     showFullscreen = true
                 } label: {
@@ -188,7 +272,6 @@ struct PlayerView: View {
                 .padding(8)
             }
         }
-        .gesture(dismissDragGesture)
     }
 
     // MARK: - 信息
@@ -204,16 +287,37 @@ struct PlayerView: View {
                 }
             }
             if let errorText {
-                Text(errorText).font(.footnote).foregroundStyle(.red)
-            }
-            if let lastError = engine.lastError {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("播放器：\(lastError)").font(.caption).foregroundStyle(.orange)
-                    if let hint = engine.formatHint {
-                        Text(hint).font(.caption2).foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(errorText).font(.footnote).foregroundStyle(.red)
+                    // 系统内核失败时给一条"换 mpv 再试"的直接出路
+                    if controller.active == .system, controller.videoAspectReady {
+                        Button {
+                            controller.switchKernel(to: .mpv)
+                        } label: {
+                            Label("用 mpv 内核再试一次", systemImage: "arrow.triangle.2.circlepath")
+                                .font(.footnote)
+                        }
+                        .buttonStyle(.bordered)
+                        .tint(Theme.accent)
                     }
                 }
             }
+            if let note = controller.kernelNote {
+                Text(note).font(.caption).foregroundStyle(.orange)
+            }
+            if let lastError = controller.errorText, controller.active == .mpv {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("播放器：\(lastError)").font(.caption).foregroundStyle(.orange)
+                    Text("当前用的是 mpv 内核；如果还是不行，多半是源给的地址本身有问题")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            } else if let hint = controller.av.formatHint, !controller.videoAspectReady {
+                Text(hint).font(.caption2).foregroundStyle(.secondary)
+            }
+            Text("当前内核：\(controller.active.label)")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
         }
     }
 
@@ -221,15 +325,21 @@ struct PlayerView: View {
 
     private var progressRow: some View {
         VStack(spacing: 2) {
-            Slider(value: Binding(get: { position },
-                                  set: { position = $0 }),
-                   in: 0...max(1, duration)) { editing in
-                if !editing { engine.seek(to: position) }
-            }
-            HStack {
-                Text(Self.timeText(position)).font(.caption2).foregroundStyle(.secondary)
-                Spacer()
-                Text(Self.timeText(duration)).font(.caption2).foregroundStyle(.secondary)
+            if controller.isLive {
+                HStack(spacing: 6) {
+                    Circle().fill(.red).frame(width: 8, height: 8)
+                    Text("直播中").font(.subheadline).foregroundStyle(.secondary)
+                    Spacer()
+                }
+            } else {
+                Slider(value: Binding(get: { controller.position },
+                                      set: { controller.seek(to: $0) }),
+                       in: 0...max(1, controller.duration))
+                HStack {
+                    Text(Self.timeText(controller.position)).font(.caption2).foregroundStyle(.secondary)
+                    Spacer()
+                    Text(Self.timeText(controller.duration)).font(.caption2).foregroundStyle(.secondary)
+                }
             }
         }
     }
@@ -243,8 +353,8 @@ struct PlayerView: View {
             }
             .disabled(index <= 0)
 
-            Button { engine.toggle() } label: {
-                Image(systemName: engine.isPlaying ? "pause.fill" : "play.fill")
+            Button { controller.toggle() } label: {
+                Image(systemName: controller.isPlaying ? "pause.fill" : "play.fill")
                     .font(.title2)
                     .frame(width: 52, height: 44)
             }
@@ -283,7 +393,7 @@ struct PlayerView: View {
                     .font(.title3)
                     .frame(width: 44, height: 44)
             }
-            .disabled(engine.currentURL == nil)
+            .disabled(!controller.videoAspectReady)
         }
         .buttonStyle(.plain)
         .foregroundStyle(Theme.accent)
@@ -322,28 +432,27 @@ struct PlayerView: View {
 
     private func setRate(_ value: Double) {
         rate = value
-        engine.rate = Float(value)
+        controller.setRate(value)
         library.settings.rate = value
-        engine.play()
     }
 
     private func switchTo(_ newIndex: Int) {
         guard newIndex >= 0, newIndex < episodes.count, newIndex != index else { return }
         saveProgress(force: true)
         index = newIndex
-        position = 0
-        duration = 0
         Task { await resolve() }
     }
 
     private func playNext(auto: Bool) {
         guard index + 1 < episodes.count else {
-            if auto { engine.pause() }
+            if auto { controller.pause() }
             return
         }
         // 自动下一集只认"真的看到结尾"（时长合理且进度接近末尾），
         // 避免播放失败/秒退时连环跳集 —— 手动点下一集不受此限制
         if auto {
+            let position = controller.position
+            let duration = controller.duration
             guard duration > 30, position > duration * 0.9 else {
                 CatyLog.shared.info("player", "忽略自动下一集（duration=\(Int(duration))s position=\(Int(position))s）")
                 return
@@ -353,9 +462,12 @@ struct PlayerView: View {
     }
 
     private func seek(by seconds: Double) {
-        let target = max(0, min(duration > 0 ? duration - 1 : position + seconds, position + seconds))
-        position = target
-        engine.seek(to: target)
+        let current = controller.position
+        let total = controller.duration
+        let target = max(0, min(total > 0 ? total - 1 : current + seconds, current + seconds))
+        controller.seek(to: target)
+        hud = GestureHUD(kind: .seek, value: seconds, text: "\(seconds >= 0 ? "+" : "")\(Int(seconds)) 秒")
+        clearHUDSoon()
     }
 
     @MainActor
@@ -378,8 +490,8 @@ struct PlayerView: View {
             let (url, headers) = try await client.resolvePlay(episodeURL: episode.url,
                                                              flag: request.flag,
                                                              site: request.site)
-            engine.rate = Float(rate)
-            engine.load(url: url, headers: headers, title: episode.name)
+            controller.update(preference: PlayerKernelPreference.from(library.settings.playerKernel), rate: rate)
+            controller.load(url: url, headers: headers, title: episode.name)
 
             // 断点续播：同一集的进度超过 10 秒才跳（等播放器准备好再 seek）
             if library.settings.rememberProgress,
@@ -387,14 +499,12 @@ struct PlayerView: View {
                record.episodeIndex == index,
                record.positionSec > 10 {
                 let target = record.positionSec
-                position = target
                 Task {
-                    // 等播放器真的就绪再跳：在缓冲阶段 seek 容易造成音画错位
                     for _ in 0..<25 {
-                        if engine.player.currentItem?.status == .readyToPlay { break }
+                        if controller.duration > 0 { break }
                         try? await Task.sleep(nanoseconds: 200_000_000)
                     }
-                    engine.seek(to: target)
+                    controller.seek(to: target)
                     CatyLog.shared.info("player", "断点续播：从 \(Int(target))s 继续")
                 }
             }
@@ -405,23 +515,18 @@ struct PlayerView: View {
     }
 
     private func tick() {
-        guard !resolving, engine.currentURL != nil else { return }
-        let current = engine.player.currentTime().seconds
-        if current.isFinite, current >= 0 { position = current }
-        if let total = engine.player.currentItem?.duration.seconds, total.isFinite, total > 0 {
-            duration = total
-        }
+        guard !resolving else { return }
         saveProgress(force: false)
     }
 
     private func saveProgress(force: Bool) {
         guard library.settings.rememberProgress, let episode else { return }
-        guard duration > 0 || force else { return }
+        guard controller.duration > 0 || force else { return }
         library.updateHistory(item: item,
                               episodeIndex: index,
                               episodeName: episode.name,
-                              position: position,
-                              duration: duration,
+                              position: controller.position,
+                              duration: controller.duration,
                               forceWrite: force)
     }
 
@@ -433,6 +538,47 @@ struct PlayerView: View {
         let s = total % 60
         if h > 0 { return String(format: "%d:%02d:%02d", h, m, s) }
         return String(format: "%02d:%02d", m, s)
+    }
+}
+
+// MARK: - 手势提示（亮度/音量/快进）
+
+struct GestureHUD: Equatable {
+    enum Kind { case brightness, volume, seek, rate }
+    let kind: Kind
+    let value: Double
+    let text: String
+}
+
+struct GestureHUDView: View {
+
+    let hud: GestureHUD
+
+    var body: some View {
+        VStack(spacing: 6) {
+            Image(systemName: icon)
+                .font(.title2)
+            Text(hud.text).font(.subheadline).monospacedDigit()
+        }
+        .padding(.horizontal, 18)
+        .padding(.vertical, 14)
+        .background(.black.opacity(0.55), in: RoundedRectangle(cornerRadius: 14))
+        .foregroundStyle(.white)
+        .transition(.opacity)
+    }
+
+    private var icon: String {
+        switch hud.kind {
+        case .brightness:
+            return hud.value > 0.5 ? "sun.max.fill" : "sun.min.fill"
+        case .volume:
+            if hud.value <= 0.01 { return "speaker.slash.fill" }
+            return hud.value > 0.5 ? "speaker.wave.3.fill" : "speaker.wave.1.fill"
+        case .seek:
+            return hud.value >= 0 ? "goforward" : "gobackward"
+        case .rate:
+            return "forward.fill"
+        }
     }
 }
 

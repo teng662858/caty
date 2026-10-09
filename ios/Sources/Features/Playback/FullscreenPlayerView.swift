@@ -16,29 +16,32 @@ import AVKit
 
 struct FullscreenPlayerView: View {
 
-    @ObservedObject var engine: AVPlayerEngine
+    @ObservedObject var controller: PlaybackController
     let episodes: [Episode]
     let currentIndex: Int
     let rate: Double
+    let isLive: Bool
     let onSelectEpisode: (Int) -> Void
     let onRate: (Double) -> Void
     let onClose: () -> Void
 
     @State private var controlsVisible = true
-    @State private var position: Double = 0
-    @State private var duration: Double = 0
     @State private var scrubbing = false
     @State private var hideTask: Task<Void, Never>?
-
-    private let ticker = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     var body: some View {
         ZStack {
             Color.black.ignoresSafeArea()
 
-            VideoPlayer(player: engine.player)
-                .ignoresSafeArea()
-                .onTapGesture { toggleControls() }
+            Group {
+                if controller.active == .system {
+                    VideoPlayer(player: controller.av.player)
+                } else {
+                    MPVVideoView(engine: controller.mpv)
+                }
+            }
+            .ignoresSafeArea()
+            .onTapGesture { toggleControls() }
 
             if controlsVisible {
                 controls
@@ -49,14 +52,12 @@ struct FullscreenPlayerView: View {
         .persistentSystemOverlays(.hidden)
         .onAppear {
             ScreenOrientation.lockLandscape()
-            syncFromEngine()
             scheduleHide()
         }
         .onDisappear {
             hideTask?.cancel()
             ScreenOrientation.lockPortrait()
         }
-        .onReceive(ticker) { _ in tick() }
     }
 
     // MARK: - 控制层
@@ -84,7 +85,7 @@ struct FullscreenPlayerView: View {
             .buttonStyle(.plain)
             .foregroundStyle(.white)
 
-            Text(engine.currentTitle ?? "")
+            Text(controller.currentTitle ?? "")
                 .font(.subheadline)
                 .foregroundStyle(.white)
                 .lineLimit(1)
@@ -96,7 +97,6 @@ struct FullscreenPlayerView: View {
                     ForEach(Array(episodes.enumerated()), id: \.element.id) { i, ep in
                         Button {
                             onSelectEpisode(i)
-                            syncFromEngine()
                             interactive()
                         } label: {
                             if i == currentIndex {
@@ -122,28 +122,31 @@ struct FullscreenPlayerView: View {
 
     private var bottomBar: some View {
         VStack(spacing: Theme.spacingS) {
-            HStack(spacing: 10) {
-                Text(Self.timeText(position)).font(.caption2).monospacedDigit()
-                Slider(value: Binding(get: { position },
-                                      set: {
-                                          position = $0
-                                          scrubbing = true
-                                      }), in: 0...max(1, duration)) { editing in
-                    if !editing {
-                        scrubbing = false
-                        engine.seek(to: position)
-                    }
+            if isLive {
+                HStack(spacing: 6) {
+                    Circle().fill(.red).frame(width: 8, height: 8)
+                    Text("直播中").font(.caption).foregroundStyle(.white)
+                    Spacer()
                 }
-                .tint(.white)
-                Text(Self.timeText(duration)).font(.caption2).monospacedDigit()
+            } else {
+                HStack(spacing: 10) {
+                    Text(Self.timeText(controller.position)).font(.caption2).monospacedDigit()
+                    Slider(value: Binding(get: { controller.position },
+                                          set: {
+                                              scrubbing = true
+                                              controller.seek(to: $0)
+                                          }), in: 0...max(1, controller.duration))
+                    .tint(.white)
+                    Text(Self.timeText(controller.duration)).font(.caption2).monospacedDigit()
+                }
             }
 
             HStack(spacing: Theme.spacingL) {
                 Button { step(-15) } label: {
                     Image(systemName: "gobackward.15").font(.title2).frame(width: 44, height: 44)
                 }
-                Button { engine.toggle(); interactive() } label: {
-                    Image(systemName: engine.isPlaying ? "pause.fill" : "play.fill")
+                Button { controller.toggle(); interactive() } label: {
+                    Image(systemName: controller.isPlaying ? "pause.fill" : "play.fill")
                         .font(.largeTitle)
                         .frame(width: 60, height: 44)
                 }
@@ -184,27 +187,11 @@ struct FullscreenPlayerView: View {
     }
 
     private func step(_ seconds: Double) {
-        let target = max(0, min(duration > 0 ? duration - 1 : position + seconds, position + seconds))
-        position = target
-        engine.seek(to: target)
+        let total = controller.duration
+        let current = controller.position
+        let target = max(0, min(total > 0 ? total - 1 : current + seconds, current + seconds))
+        controller.seek(to: target)
         interactive()
-    }
-
-    private func tick() {
-        guard !scrubbing else { return }
-        let current = engine.player.currentTime().seconds
-        if current.isFinite, current >= 0 { position = current }
-        if let total = engine.player.currentItem?.duration.seconds, total.isFinite, total > 0 {
-            duration = total
-        }
-    }
-
-    private func syncFromEngine() {
-        let current = engine.player.currentTime().seconds
-        if current.isFinite, current >= 0 { position = current }
-        if let total = engine.player.currentItem?.duration.seconds, total.isFinite, total > 0 {
-            duration = total
-        }
     }
 
     private func toggleControls() {

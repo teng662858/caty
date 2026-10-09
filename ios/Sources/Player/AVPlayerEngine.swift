@@ -24,6 +24,8 @@ final class AVPlayerEngine: ObservableObject {
     @Published private(set) var lastError: String?
     /// 给用户看的"为什么播不了"（例：这种封装系统内核不支持）
     @Published private(set) var formatHint: String?
+    /// 播完（只认**自己这一个条目**发的通知 —— 以前用全局通知踩过"连环跳集"的坑）
+    let ended = PassthroughSubject<Void, Never>()
 
     /// 0.5–2.0，P5 做倍速菜单时用
     @Published var rate: Float = 1.0
@@ -70,6 +72,7 @@ final class AVPlayerEngine: ObservableObject {
         // 音画同步：让系统用时间域算法处理变速，避免变调/错位
         item.audioTimePitchAlgorithm = .timeDomain
         observe(item: item)
+        observeEnd(of: item)
         player.replaceCurrentItem(with: item)
         CatyLog.shared.info("player", "开始播放：\(url.absoluteString)")
         play()
@@ -94,6 +97,14 @@ final class AVPlayerEngine: ObservableObject {
                 self.setError(text)
             }
         })
+    }
+
+    /// 播完通知（把 object 限定成这个 item，别的播放器/上一集残留就不会误触发）
+    private func observeEnd(of item: AVPlayerItem) {
+        NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime,
+                                              object: item, queue: .main) { [weak self] _ in
+            self?.ended.send()
+        }
     }
 
     private func setError(_ message: String) {

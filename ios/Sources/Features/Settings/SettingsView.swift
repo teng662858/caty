@@ -47,6 +47,18 @@ struct SettingsView: View {
                 get: { library.settings.rememberProgress },
                 set: { library.settings.rememberProgress = $0 }
             ))
+            // P6：播放内核（系统 AVPlayer / libmpv / 自动）
+            Picker("播放内核", selection: Binding(
+                get: { PlayerKernelPreference.from(library.settings.playerKernel) },
+                set: { library.settings.playerKernel = $0.rawValue }
+            )) {
+                ForEach(PlayerKernelPreference.allCases) { option in
+                    Text(option.label).tag(option)
+                }
+            }
+            Text(PlayerKernelPreference.from(library.settings.playerKernel).detail)
+                .font(.footnote)
+                .foregroundStyle(.secondary)
         }
     }
 

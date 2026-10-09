@@ -72,6 +72,26 @@ struct AppSettings: Codable {
     var gridColumns: Int = 3            // 海报墙每行几个
     var defaultSiteKey: String?         // 首页默认站点
     var historyDays: Int = 60           // 历史保留天数
+    /// 播放内核：auto（自动）/ system（系统 AVPlayer）/ mpv（libmpv）。P6 加的
+    var playerKernel: String = PlayerKernelPreference.auto.rawValue
+    /// 弹幕开关（源支持弹幕时才有效）
+    var danmakuEnabled: Bool = false
+
+    init() {}
+
+    /// 手写解码：**新增设置项时，老版本存下来的 json 缺这些键也不能让整个库解析失败**
+    /// （LibraryStore.load 用的是 try? decode：一旦抛错就"当作没有本地库"，收藏/历史会一起丢）
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        rate = try container.decodeIfPresent(Double.self, forKey: .rate) ?? 1.0
+        rememberProgress = try container.decodeIfPresent(Bool.self, forKey: .rememberProgress) ?? true
+        gridColumns = try container.decodeIfPresent(Int.self, forKey: .gridColumns) ?? 3
+        defaultSiteKey = try container.decodeIfPresent(String.self, forKey: .defaultSiteKey)
+        historyDays = try container.decodeIfPresent(Int.self, forKey: .historyDays) ?? 60
+        playerKernel = try container.decodeIfPresent(String.self, forKey: .playerKernel)
+            ?? PlayerKernelPreference.auto.rawValue
+        danmakuEnabled = try container.decodeIfPresent(Bool.self, forKey: .danmakuEnabled) ?? false
+    }
 }
 
 // MARK: - 库

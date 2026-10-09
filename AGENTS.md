@@ -88,11 +88,24 @@ PeekPili / 魔力云播 / 蚂蚁影视 共用同一套格式），App 下载 →
 13. **编译缓存的两个坑**：① 必须带 `NODE_COMPILE_CACHE_PORTABLE=1`（iOS 容器路径含 UUID，不加会静默全 miss）；
     ② `NODE_COMPILE_CACHE` 必须在 `node_start` **之前**由宿主 `setenv`（环境变量只在 Environment 创建时读一次）。
     另：iOS 上要按机型设 `--max-old-space-size`（App 侧按物理内存 1/3、封顶 1.5 GB 自动算）。
-14. **没有 Mac 时的编译通路（当前主路径）**：`.github/workflows/ios.yml` 借 GitHub 的 macOS runner →
+14. **没有 Mac 时的编译通路（当前主路径）**：`.github/workflows/build-ipa.yml` 借 GitHub 的 macOS runner →
     自动下载 NodeMobile（校验 sha256）→ `xcodegen generate`（工程描述在 `ios/project.yml`）→
     `xcodebuild … CODE_SIGNING_ALLOWED=NO` → 产出 `Caty-unsigned.ipa` → Windows 上用 **Sideloadly** 签名装机。
     **不要把 `NodeMobile.xcframework` 或 `.xcodeproj` 提交进仓库**（100 MB+、国内推送极慢；`.gitignore` 已挡）。
     本机可用 `gh`（已装）建私有仓库并推送；`tools/make-ios-package.mjs` 负责重新打交付包。
+15. **仓库与两个 GitHub 限制（2026-10-09 实测，别踩第二次）**：
+    - 仓库：`https://github.com/teng662858/caty`（**私有**，用户名就是用户的 GitHub 账号）。
+    - **令牌缺 `workflow` 权限** → `git push` 遇到 `.github/workflows/**` 一律被拒
+      （`refusing to allow an OAuth App to create or update workflow … without workflow scope`），
+      Contents API 也不行（返回 404 掩码）。→ 该目录已加进 `.gitignore`；改 CI 只能
+      **用 ZCode 内置浏览器（已登录 GitHub）在网页界面创建/编辑**，或先让用户执行一次
+      `gh auth refresh -h github.com -s workflow`。
+    - **Actions 计费被拦**（`The job was not started because recent account payments have failed or
+      your spending limit needs to be increased`）：用户账号是 GitHub Free，本月已产生 $21.15 用量
+      （主要来自 `LumeBox` 仓库）→ 免费额度用尽 + 支出限额 $0 → 私有仓库的 macOS 任务被拒。
+      出路：**① 仓库改公开（公开仓库 Actions 免费，最快）** ② 加支付方式并把支出限额设 >$0
+      ③ 换 Codemagic（免费 500 分钟/月 macOS，保持私有）。**这一步需要用户决定，不要自作主张改仓库可见性。**
+    - 遗留小尾巴：网页建文件时误建了 `.github/workflows/ios.yml/ios.yml`（多一层目录），无害，得空清理。
 
 ## 铁律（不可违反）
 
@@ -114,20 +127,20 @@ PeekPili / 魔力云播 / 蚂蚁影视 共用同一套格式），App 下载 →
 **零 Mac 编译通路**（`.github/workflows/ios.yml` + `ios/project.yml` + `docs/09`）、
 P2/P4 链路桌面预演通过（`tools/host/p2-selftest.mjs`）。
 
-**下一步：等用户的动作（都是他的活，别重复做）**
+**下一步：等用户拍板（只有一件事需要他决定）**
 
-1. 照 **`docs/09-没有Mac也能装到手机.md`** 走：注册 GitHub → `git push`（`gh` 已装，命令在文档里）
-   → Actions 出未签名 ipa → Windows 用 Sideloadly 签名装机。
-2. 装好后把**诊断页日志**贴回来（M1/D2 闸门：真机能否跑 Node、编译缓存是否命中）。
-3. **D0 抓 fixture**（需要他手上的订阅地址；`--run` 会执行第三方 Node 程序，**执行前必须先说明**）：
-   ```bash
-   cd /d/Zcode/Catys
-   node tools/host/node-host.mjs '<用户手上的订阅地址>' --run --probe-routes
-   ```
-   用抓到的响应产出 `docs/contract-notes.md`（P4 的 endpoint 约定以它为准，当前按生态通用约定实现）。
+**GitHub Actions 被计费拦住了**（见事实 15）。等他选：
+- **A. 仓库改公开** → 我立刻改 + 重跑 CI → 拿到 ipa（最快；之后可随时改回私有）
+- **B. 加支付方式 + 支出限额设 >$0** → 保持私有；需要他自己在浏览器里填卡
+- **C. 换 Codemagic**（免费 500 分钟/月 macOS）→ 保持私有；需要他注册新账号，我配 `codemagic.yaml`
 
-**我这边还没交付的**：P5 代码包（按 `docs/02-ui-spec.md` 逐屏 + 搜索/收藏/历史/设置 + GRDB 落库）。
-**建议等真机日志回来再动手** —— 不在未验证的运行时上堆界面。
+他选定后我再动。**在他明确同意前，不要改动仓库可见性。**
+
+**已经做完、不用重做的**：代码全部推到 `teng662858/caty`（51 个文件）、CI 文件已就位并成功触发过一次、
+NodeMobile 产物已核验（Node v24.20.0 + polywasm）、P2/P3/P4 三包代码齐全。
+
+**还欠的活**：P5 代码包（按 `docs/02-ui-spec.md` 逐屏 + 搜索/收藏/历史/设置 + GRDB 落库）。
+建议等真机日志回来再动手 —— 不在未验证的运行时上堆界面。
 
 ## 工具（均已验证，可直接用）
 

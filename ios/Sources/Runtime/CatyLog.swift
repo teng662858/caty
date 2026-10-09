@@ -189,7 +189,8 @@ final class CatyLog {
                       let quoteRange = Range(match.range(at: 2), in: result),
                       let valueRange = Range(match.range(at: 3), in: result)
                 else { return }
-                let replacement = result[keyRange] + result[quoteRange] + "<redacted len=\(result[valueRange].count)>"
+                let prefix = String(result[keyRange]) + String(result[quoteRange])
+                let replacement = prefix + "<redacted len=\(result[valueRange].count)>"
                 replacements.append((keyRange.lowerBound..<valueRange.upperBound, replacement))
             }
             for (range, replacement) in replacements.reversed() {

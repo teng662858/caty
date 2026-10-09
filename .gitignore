@@ -25,3 +25,8 @@ ios/Caty.xcodeproj/
 ios/xcodebuild.log
 ios/Caty-unsigned.ipa
 ios/Payload/
+
+# ⚠️ workflow 文件不走 git：当前 gh 令牌没有 workflow 权限，推送会被 GitHub 拒绝。
+# 仓库里的 .github/workflows/build-ipa.yml 是通过网页界面创建的；本地这份只是留档。
+# 若以后给令牌加了 workflow 权限（gh auth refresh -h github.com -s workflow），可以删掉这一行改为纳入版本管理。
+.github/workflows/

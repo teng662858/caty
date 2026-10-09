@@ -48,6 +48,14 @@ final class RuntimeCoordinator: ObservableObject {
     private var importing = false
     private var cancellables: Set<AnyCancellable> = []
 
+    init() {
+        // 嵌套的 ObservableObject 不会自动把变化传给外层（runtime 的 @Published 不会刷新观察本类的界面），
+        // 所以这里手工转发一次，否则首页上的运行状态会是旧值。
+        runtime.objectWillChange
+            .sink { [weak self] _ in self?.objectWillChange.send() }
+            .store(in: &cancellables)
+    }
+
     /// 提示文案：导入/删除源之后必须重启 App 才生效
     static let restartHint = "改动要重启 App 才生效（iOS 上一个进程只能启动一次 Node）"
 

@@ -34,12 +34,13 @@ struct PlayerView: View {
     @State private var showFullscreen = false
     /// 手势 HUD（亮度/音量/快进提示）
     @State private var hud: GestureHUD?
-    /// 音量（自己记住，因为 iOS 不给读系统音量以外的写入口）
     @State private var volume: Float = 0.5
     @State private var brightness: CGFloat = UIScreen.main.brightness
     @State private var volumeSlider: UISlider?
+    @State private var hideHUDTask: Task<Void, Never>?
     @State private var longPressRate = false
     /// 弹幕（P6）：从源里取这一集的弹幕，Canvas 画在画面上
+    /// 弹幕：小窗、全屏、源推送都写同一份 DanmakuStore，这里订阅它的变化
     @State private var danmaku: [DanmakuComment] = []
     @State private var danmakuEnabled: Bool
 
@@ -98,7 +99,17 @@ struct PlayerView: View {
                                  isLive: controller.isLive,
                                  onSelectEpisode: { switchTo($0) },
                                  onRate: { setRate($0) },
-                                 onClose: { showFullscreen = false })
+                                 onClose: { showFullscreen = false },
+                                 onPrev: { switchTo(index - 1) },
+                                 canGoPrev: index > 0,
+                                 onNext: { switchTo(index + 1) },
+                                 canGoNext: index < episodes.count - 1,
+                                 danmakuEnabled: danmakuEnabled,
+                                 onToggleDanmaku: {
+                                     danmakuEnabled.toggle()
+                                     library.settings.danmakuEnabled = danmakuEnabled
+                                     if danmakuEnabled, danmaku.isEmpty { Task { await loadDanmaku() } }
+                                 })
         }
         .task { await resolve() }
         .onAppear {
@@ -114,6 +125,9 @@ struct PlayerView: View {
             controller.stop()
         }
         .onReceive(ticker) { _ in tick() }
+        .onReceive(DanmakuStore.shared.$comments) { list in
+            danmaku = list
+        }
     }
 
     // MARK: - 手势
@@ -153,40 +167,38 @@ struct PlayerView: View {
             .onChanged { value in
                 let dx = value.translation.width
                 let dy = value.translation.height
-                let horizontal = abs(dx) > abs(dy)
-                if horizontal {
+                if abs(dx) > abs(dy) {
                     dragY = 0
-                    let seconds = Double(dx) / 6.0            // 每 6pt ≈ 1 秒，手指滑一屏 ≈ 90 秒
+                    let seconds = Double(dx) / 6.0
+                    let current = controller.position
+                    let total = controller.duration
+                    let target = max(0, min(total > 0 ? total - 1 : current + seconds, current + seconds))
+                    controller.seek(to: target)
                     hud = GestureHUD(kind: .seek, value: seconds,
-                                     text: "\(seconds >= 0 ? "+" : "")\(Int(seconds)) 秒")
-                    controller.seek(to: max(0, min(controller.duration > 0 ? controller.duration - 1
-                                                                          : controller.position + seconds,
-                                                  controller.position + seconds)))
+                                     text: (seconds >= 0 ? "+" : "") + String(Int(seconds)) + " 秒")
                     return
                 }
-                if dy > 0 && abs(dy) > abs(dx) * 1.2 {
-                    dragY = dy                                     // 下滑关闭
+                if dy > 0, abs(dy) > abs(dx) * 1.2 {
+                    dragY = dy
                     hud = nil
                     return
                 }
                 dragY = 0
-                // 左半边调亮度、右半边调音量（和主流播放器一致）
                 let delta = -Double(dy) / 260.0
                 if value.startLocation.x < UIScreen.main.bounds.width / 2 {
                     brightness = min(1, max(0, brightness + CGFloat(delta)))
                     UIScreen.main.brightness = brightness
                     hud = GestureHUD(kind: .brightness, value: Double(brightness),
-                                     text: "\(Int(brightness * 100))%")
+                                     text: String(Int(brightness * 100)) + "%")
                 } else {
                     volume = min(1, max(0, volume + Float(delta)))
                     volumeSlider?.value = volume
                     hud = GestureHUD(kind: .volume, value: Double(volume),
-                                     text: "\(Int(volume * 100))%")
+                                     text: String(Int(volume * 100)) + "%")
                 }
             }
             .onEnded { value in
-                let dy = value.translation.height
-                if dy > 110 || value.predictedEndTranslation.height > 240 {
+                if value.translation.height > 110 || value.predictedEndTranslation.height > 240 {
                     hud = nil
                     close()
                     return
@@ -196,20 +208,28 @@ struct PlayerView: View {
             }
     }
 
-    private func clearHUDSoon() {
-        guard hud != nil else { return }
-        Task {
-            try? await Task.sleep(nanoseconds: 800_000_000)
-            hud = nil
-        }
-    }
-
     /// iOS 没有公开的"设置系统音量"API，业界做法是拿 MPVolumeView 里那个 UISlider 来用
     private func prepareVolumeSlider() {
         let volumeView = MPVolumeView(frame: .zero)
         volumeSlider = volumeView.subviews.compactMap { $0 as? UISlider }.first
         volume = volumeSlider?.value ?? AVAudioSession.sharedInstance().outputVolume
         brightness = UIScreen.main.brightness
+    }
+
+    private func showSeekHUD(seconds: Double) {
+        hud = GestureHUD(kind: .seek, value: seconds,
+                         text: (seconds >= 0 ? "+" : "") + String(Int(seconds)) + " 秒")
+        clearHUDSoon()
+    }
+
+    private func clearHUDSoon() {
+        guard hud != nil else { return }
+        hideHUDTask?.cancel()
+        hideHUDTask = Task {
+            try? await Task.sleep(nanoseconds: 800_000_000)
+            guard !Task.isCancelled else { return }
+            hud = nil
+        }
     }
 
     // MARK: - 视频区
@@ -236,7 +256,14 @@ struct PlayerView: View {
             if danmakuEnabled, !danmaku.isEmpty {
                 DanmakuOverlay(comments: danmaku,
                                position: { extrapolatedPosition },
-                               isPlaying: { controller.isPlaying })
+                               isPlaying: { controller.isPlaying },
+                               fontSize: CGFloat(library.settings.danmakuFontSize),
+                               opacity: library.settings.danmakuOpacity,
+                               laneSpacing: CGFloat(library.settings.danmakuLaneSpacing),
+                               showTop: library.settings.danmakuShowTop,
+                               showBottom: library.settings.danmakuShowBottom,
+                               blockWords: library.settings.danmakuBlockWords
+                                   .split(separator: ",").map(String.init))
                     .padding(.horizontal, 2)
                     .padding(.top, 2)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
@@ -252,23 +279,25 @@ struct PlayerView: View {
                     .scaleEffect(1.3)
             }
         }
-        .aspectRatio(16.0 / 9.0, contentMode: .fit)
+        // ⚠️ 按**视频自己的宽高比**显示：竖屏短剧是 9:16，硬塞进 16:9 的框里会变成中间一小条
+        .aspectRatio(controller.videoAspect ?? 16.0 / 9.0, contentMode: .fit)
         .frame(maxWidth: .infinity)
+        .frame(maxHeight: controller.isPortraitVideo ? 420 : nil)
         .contentShape(Rectangle())
         .gesture(videoDragGesture)
+        // ⚠️ 2 倍速只能写在 perform 里：onPressingChanged 是"手指一按下就 true"，
+        // 写在它里面会导致**点一下就变 2 倍速**（用户真机反馈过）。
+        // perform 是"按满 0.5 秒"才触发；松手（pressing=false）再恢复。
         .onLongPressGesture(minimumDuration: 0.5) {
-            // 长按临时 2 倍速（松手恢复）
-        } onPressingChanged: { pressing in
             guard controller.videoAspectReady else { return }
-            if pressing, !longPressRate {
-                longPressRate = true
-                controller.setRate(2.0)
-                hud = GestureHUD(kind: .rate, value: 2.0, text: "2 倍速播放中")
-            } else if !pressing, longPressRate {
-                longPressRate = false
-                controller.setRate(rate)
-                clearHUDSoon()
-            }
+            longPressRate = true
+            controller.setRate(2.0)
+            hud = GestureHUD(kind: .rate, value: 2.0, text: "2 倍速播放中")
+        } onPressingChanged: { pressing in
+            guard !pressing, longPressRate else { return }
+            longPressRate = false
+            controller.setRate(rate)
+            clearHUDSoon()
         }
         .overlay(alignment: .bottomTrailing) {
             if !showFullscreen, controller.videoAspectReady {
@@ -490,8 +519,7 @@ struct PlayerView: View {
         let total = controller.duration
         let target = max(0, min(total > 0 ? total - 1 : current + seconds, current + seconds))
         controller.seek(to: target)
-        hud = GestureHUD(kind: .seek, value: seconds, text: "\(seconds >= 0 ? "+" : "")\(Int(seconds)) 秒")
-        clearHUDSoon()
+        showSeekHUD(seconds: seconds)
     }
 
     @MainActor
@@ -557,13 +585,21 @@ struct PlayerView: View {
     }
 
     /// 取这一集的弹幕（源的 /danmu/auto：<剧名> + <第几集>）
+    /// 这一集的唯一键（切集后旧结果不能覆盖新结果）
+    private var episodeKey: String { item.id + "#" + String(index) }
+
     private func loadDanmaku() async {
         // 弹幕接口在**这个站点所属的那个源**上（多源同进程时必须用对地址）
         guard let client, let base = client.base(for: request.site.sourceId) else { return }
+        // 设置里选了"自定义远程"就用远程地址（兼容别的弹幕服务）
+        let remote = library.settings.danmakuSource == "remote" ? library.settings.danmakuRemoteURL : nil
+        let key = episodeKey
         let comments = await DanmakuService.comments(base: base,
                                                      name: item.name,
-                                                     episode: index + 1)
-        danmaku = comments
+                                                     episode: index + 1,
+                                                     remoteBase: remote)
+        guard DanmakuStore.shared.episodeKey == key else { return }
+        DanmakuStore.shared.set(comments, episodeKey: key)
     }
 
     private func saveProgress(force: Bool) {

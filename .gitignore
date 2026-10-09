@@ -1,0 +1,27 @@
+# 运行期数据：含下载到的第三方 bundle，运行后还会写入网盘凭据 —— 绝不提交
+host-data/
+*.pending
+
+# 探测/抓包产物：可能含源站地址与凭据字段，按需 force-add
+fixtures/
+
+# macOS / Xcode
+.DS_Store
+build/
+DerivedData/
+*.xcuserstate
+xcuserdata/
+
+# Node
+node_modules/
+
+# 交付包（给 Mac 的代码包，可随时重新生成）
+dist/
+
+# NodeMobile 运行时（100 MB+，CI 会自动下载；不要提交，否则推送会非常慢）
+ios/Frameworks/
+ios/build/
+ios/Caty.xcodeproj/
+ios/xcodebuild.log
+ios/Caty-unsigned.ipa
+ios/Payload/

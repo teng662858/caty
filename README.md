@@ -1,0 +1,206 @@
+# Caty —— iPhone 自签「通用源」播放器
+
+> 🤖 **AI 助手请先读 [AGENTS.md](AGENTS.md)**（项目说明、关键技术事实、铁律、当前下一步）。
+
+> **项目位置（Windows）**：`D:\Zcode\Catys`  ·  **App 产品名**：Caty  ·  **目标设备**：你的 iPhone（iOS 27.0.1，自签）
+
+一个自签自用的 iPhone 影视客户端，核心能力是**兼容这一类"通用接口"订阅**
+（MiraPlay / UZN / 羊壳 / 猫影视 / 猫爪 / JSTV / PeekPili / 魔力云播 / 蚂蚁影视 等共用同一套格式）：
+
+```
+http://<user>:<pass>@<host>/index.js.md5
+```
+
+---
+
+## 最重要的一个结论（先读这个）
+
+**这类"源"不是一份规则配置，而是一整个 Node.js 服务端程序**（本次实测：6.2 MB 的 esbuild 产物，
+内含 fastify、protobufjs、pako，以及夸克/UC/阿里/百度/115/天翼/123/Telegram/AList 等一整套网盘解析）。
+
+所以目标 App 的本质是：
+
+```
+Node 运行时宿主（最核心，工作量 > 50%）  +  TVBox 兼容层（协议翻译）  +  播放器/UI
+```
+
+**不是** JS 规则解释器，**也不是** JSON 配置解析器。`index.js.md5` 只是一个"版本标记 + 校验文件"：
+
+```
+订阅 URL           → 拆出四件套
+index.js.md5       → 32 位 MD5，用来判断要不要重新下载
+index.js           → Node 程序，必须 export default { async start(config) }
+index.config.js    → 默认配置（静态对象字面量，不执行）
+index.config.js.md5→ 配置的 MD5
+
+客户端要做：
+  下载 → 校验 → 缓存提交 → 用内置 Node 运行时执行 bootstrap.js
+  → bundle 调 globalThis.catServerFactory() 起本地 HTTP 服务并回报端口
+  → 客户端 GET http://127.0.0.1:<port>/config 拿站点目录
+  → 映射成 TVBox 站点（type:3, api:"node:/spider/<key>/<type>"）→ 播放
+```
+
+细节全部在 [docs/00-protocol-spec.md](docs/00-protocol-spec.md)（含实测数据与引用实现出处）。
+
+### 补充：源的身份是 bundle 的 MD5，不是 URL
+
+对 4 个订阅做过对比（见 [00 文档 §8](docs/00-protocol-spec.md)），分成三个家族：
+
+| 家族 | 体积 | 特征 |
+|---|---|---|
+| **A 基础版** | 6.2 MB / 24 提供者 | 阿里·夸克·UC·百度·115·123资源·光雅·盘链·B站 + 2 台 AList |
+| **B 全功能版** | 9.2 MB / 32 提供者 | 多了 `live` 直播、`emby`、`cms` 采集、`t4`、`pansou` 盘搜、`webdav`、`danmu` 弹幕、`pikpak`/`tianyi`/`pan123` |
+| **C 容器版** | 5.9 MB | 配置里只有 `customSpiders{dir,urls,…}`，站点靠二级 spider 注入 |
+
+其中 `9280.kstore.vip/cat` 与 `cat.王二小放牛娃.top` 是**同一份 bundle 的逐字节镜像**（MD5、大小、配置全同）。
+所以缓存要**按 bundle MD5 建条目**并维护镜像列表，换镜像就不必重下这 6–9 MB。
+
+四个源的 `sites.list` **全部为空** —— 站点目录只能从**运行时**的 `/config` 拿，静态解析配置是拿不到的。
+
+---
+
+## 文档
+
+| 文件 | 说明 |
+|---|---|
+| [AGENTS.md](AGENTS.md) | **给 AI 助手的项目说明**（新会话自动读取）：项目是什么、用户是小白的分工、环境事实、10 条关键技术事实、7 条铁律、当前下一步 |
+| [docs/03-beginner-handbook.md](docs/03-beginner-handbook.md) | **给你的操作手册** ⭐ 从 P0 开始照着做 |
+
+> 👉 **如果你是来开始做 App 的，先看 [docs/03-beginner-handbook.md](docs/03-beginner-handbook.md)** ——
+> 那是给你的操作手册（P0→P6 每一步"你点什么、我做什么、怎么验收、卡住怎么办"），本文其余部分偏技术背景。
+
+| 文档 | 内容 |
+|---|---|
+| **[docs/03-beginner-handbook.md](docs/03-beginner-handbook.md)** | **小白操作手册** ⭐：三条时间线、准备清单（含成本）、分工表、P0–P6 分阶段操作、45 个文件清单、Info.plist/权限、命令行编译、**20 条报错速查表**、验收测试清单、术语表、缺口补齐清单 |
+| [docs/04-conversation-log.md](docs/04-conversation-log.md) | **对话与决策记录**：四轮问答的完整记录、实测数据、八条 ADR 决策、待办 |
+| [docs/00-protocol-spec.md](docs/00-protocol-spec.md) | **协议实测规格**：包结构、启动契约、`/msg` 桥、路由表、配置契约、缓存与完整性、参考实现索引、多源家族对比 |
+| [docs/01-dev-plan.md](docs/01-dev-plan.md) | **开发大纲与步骤计划**：目标/非目标、架构、技术选型、里程碑 M0–M8、**最快路径日级排期**、风险表、自签方案、CI 出包 |
+| [docs/02-ui-spec.md](docs/02-ui-spec.md) | **UI 规格（两部分）**。结构：设计 token、信息架构、8 屏版面规格、组件库、**界面↔协议字段对照表**、五态矩阵、SwiftUI 要点、构建顺序。**细节**：动效 token、字体与 SF Symbols 图标表、手势交互矩阵、**浅色模式**、**弹幕渲染规格**、弹窗/Toast/空态错误**文案表**、数据格式规范、**设置项全表**、冷启动与降级规则 |
+| [docs/07-冲刺计划.md](docs/07-冲刺计划.md) | ⏱ **7 天冲刺计划（最快路径）**：逐日清单 D0–D7、关键路径图、会吃掉时间的 4 件事、加速规则。**想最快做出来就先看这份** |
+| [docs/08-P2操作卡.md](docs/08-P2操作卡.md) | 🔧 **P2/P3 逐步操作卡（有 Mac 时走这条）**：NodeMobile 下载、文件放哪、Build Settings 抄哪些值、真机验收逐条对照、P2/P3 专用报错表 |
+| [docs/09-没有Mac也能装到手机.md](docs/09-没有Mac也能装到手机.md) | ☁️ **零 Mac 通路** ⭐（当前主路径）：GitHub 免费 macOS 机器编译出未签名 ipa → Windows 上用 Sideloadly 签名安装 → 7 天续签 |
+| [docs/06-本会话完整记录.md](docs/06-本会话完整记录.md) | **本项目的完整对话记录**（自动导出、已脱敏）：每一轮你的提问 + 我的回答 + 工具调用（可折叠展开）。随时可用 `tools/export-session.mjs` 重新导出 |
+| [docs/05-data-model.md](docs/05-data-model.md) | **数据 · 状态 · 错误 · 日志 · 设置键**：Swift 数据模型定义、SQLite schema、**多源状态机**、错误码表、日志规范（含脱敏要求）、**设置持久化键表**、版本与备份、非目标清单 |
+| `docs/contract-notes.md` | （待产出）真跑实抓的 endpoint 与字段清单 |
+
+## 设计稿
+
+| 文件 | 内容 |
+|---|---|
+| [design/ui-mockup.png](design/ui-mockup.png) | ①首页 ②分类 ③详情 ④播放 ⑤设置 |
+| [design/ui-mockup-2.png](design/ui-mockup-2.png) | ⑥搜索 ⑦片库 ⑧首次导入源 |
+| `design/ui-mockup.html` / `ui-mockup-2.html` | 可编辑源码（改 CSS 变量换配色；用 Chrome 无头截图即可重新出稿） |
+
+```bash
+# 重新出稿（本机 Chrome/Edge 均可）
+chrome --headless=new --disable-gpu --hide-scrollbars --force-device-scale-factor=1.6 \
+       --window-size=2120,960 --screenshot=design/ui-mockup.png \
+       "file:///<绝对路径>/design/ui-mockup.html"
+```
+
+## 工具（第 0 步，Windows 上就能跑）
+
+| 工具 | 作用 | 安全 |
+|---|---|---|
+| `tools/probe/config-probe.mjs` | 体检订阅包：下载、MD5 校验、跳转链、MIME 伪装、**静态**提取配置与站点目录、提供者注册表、凭据字段长度 | ✅ 不执行任何下载到的 JS |
+| `tools/host/node-host.mjs` | 桌面**参考宿主**：等价 FongMi 的 `NodeBundle` + `NodeService` + `NodeConfigMapper` + `NodeRoute` | ⚠️ 加 `--run` 才会执行第三方代码，**默认干跑** |
+| `tools/host/bootstrap.js` | **启动契约**实现（`catServerFactory` / `catDartServerPort` / `/msg` 桥 / `runtime.start(config)`）—— 已逐字节同步到 `ios/Resources/bootstrap.js` | 同上 |
+| `tools/host/p2-selftest.mjs` | **P2 链路桌面预演**：用 iOS 那份 `bootstrap.js` + 打桩 bundle，把 `serverStarted → /config → 站点映射` 全跑一遍。**不下载、不执行第三方代码** | ✅ 只跑自带文件 |
+| `tools/check-swift-heuristics.mjs` | **Swift 粗略自查**（Windows 无编译器时的兜底）：括号平衡、中文引号、冲突标记、TODO、CRLF、文件行数总览 | ✅ 只读 |
+| `tools/make-ios-package.mjs` | **一键重打包**给 Mac 的交付包 → `dist/Caty-P2P3-代码包.zip`（打前先跑自查 + P2 预演，任一失败不出包） | ✅ 只读源码 |
+
+```bash
+# 1) 安全体检（不执行代码）
+node tools/probe/config-probe.mjs 'http://user:pass@host/index.js.md5' --out fixtures/mysrc
+
+# 2) 干跑（只下载/校验/准备，不执行）
+node tools/host/node-host.mjs 'http://user:pass@host/index.js.md5'
+
+# 3) 真正启动 + 探测 endpoint（会执行第三方 Node 程序，请只用信任的源）
+node tools/host/node-host.mjs 'http://user:pass@host/index.js.md5' --run --probe-routes
+```
+
+---
+
+## 第一步 / 第二步（速览）
+
+**第一步 —— M0：协议与运行时验证（2~4 天，不需要 Mac）**
+用上面三个工具在桌面把源真正跑通，抓出 `/config`、`/config/sites/list`、`/spider/<key>/3?...` 的真实响应，
+全部存成 `fixtures/`，写一份 `docs/contract-notes.md`。
+验收：桌面能走完「导入源 → 分类 → 列表 → 搜索 → 详情 → 播放地址」，并有性能基线数字。
+
+**第二步 —— M1：iOS 最小运行时 "Hello Node"（3~7 天，需要 Mac）**
+建 SwiftUI 工程 → 集成 `NodeMobile.xcframework` → 后台线程 `node_start(…)` 跑 `bootstrap.js` →
+Swift 侧实现 `/msg` 桥收 `serverStarted` → GET `/config` 打印站点列表。
+验收：真机跑通 + 首屏耗时/内存/CPU 数字；**这一步是闸门** —— 若 iOS 无 JIT 下不可用，
+立刻转 TrollStore+JIT 或"远程后端模式"，而不是继续做 UI。
+
+---
+
+## 安全与合规
+
+- **只做容器**：本 App 不内置、不打包、不分发任何内容源，不含影视内容，不提供 VIP 解析或 DRM 绕过。
+- **源是第三方可执行代码**：它在你 App 里拥有完整文件与网络权限，并且它的管理面板本身就在保管你的网盘
+  cookie/token。→ 只用你信任的源；不要用主力网盘账号；`host-data/` 与运行期数据目录**绝不外发、绝不提交**。
+- **只自签自用**：请勿公开分发、请勿上架、请勿收费。这类源聚合的多为第三方影视资源，存在版权风险，
+  这是"自用工具"与"侵权工具"的分界线。
+- **许可证**：参考实现（OKVideoMac）为 GPL-3.0，libmpv 亦涉 GPL。自签自用无实际约束，
+  **但一旦分发就必须开源你的代码**；若想闭源分发，播放器改用 MobileVLCKit（LGPL）并避免照抄 GPL 代码。
+
+## 工期与硬约束
+
+三条可选时间线（只做 iPhone 也不能再省多少 —— 瓶颈不是设备类型）：
+
+| 目标 | 工期 | 内容 |
+|---|---|---|
+| **A 能播** | **5–8 个工作日** | 导入源 → 文字列表 → 能播出画面（丑但能用） |
+| **B 日常可用**（推荐） | **约 3 周** | A + 完整 8 屏界面 + 搜索/收藏/历史 + 源管理 |
+| **C 全功能** | **6–8 周** | B + libmpv 硬解/字幕/弹幕渲染 + 直播 EPG + WebDAV + iPad |
+
+**硬约束（都不是时间问题，是能不能做的问题）：**
+
+- 当前开发机是 **Windows**；**M1 起必须有 Mac**（或 Actions 出未签名 ipa，但真机调试极痛苦）。
+- 你的设备是 **iOS 27.0.1 → 用不了 TrollStore**（它只覆盖 14.0–16.6.1 / 17.0 部分），
+  所以**"无 JIT"是既定前提**。对策：`module.enableCompileCache()`（已写进 `bootstrap.js`）+ 启动预热 + 首屏用缓存渲染。
+  如果实测仍慢到不可用，退路是"远程后端模式"（把同一个 bundle 部署到 VPS，App 只做客户端）。
+- 签名：免费 Apple ID（7 天续签、同时约 3 个 App）或付费账号（$99/年，省心）。
+
+---
+
+## 当前状态
+
+**已完成**
+- [x] 协议逆向与实测（四件套 / 契约 B / 路由表 / 配置结构 / 三家族 24+32 提供者）
+- [x] **UI 结构与版式规格 + 8 屏设计稿（PNG，可直接审阅）**
+- [x] **小白操作手册 + 对话与决策记录 + 7 天冲刺计划**
+- [x] `config-probe.mjs` —— 四源实测跑通（MD5 校验、302 跳转、MIME 伪装识别、契约判别、配置静态解析）
+- [x] `node-host.mjs` —— 干跑验证（下载 / 校验 / 原子提交 / 缓存复用 / bridge 起停）
+- [x] `bootstrap.js` —— 启动契约实现完成（含无 JIT 下的编译缓存优化 + iOS 的 portable 开关）
+- [x] **运行时选型定案并实测核验**：`digidem/nodejs-mobile` **Node 24 `v24.20.0-0`（lite）**
+      —— 官方 NodeMobile 只有 18.20.4，而 iOS 无 JIT 下 Node 18 没有 WebAssembly → `fetch` 是坏的，必须用 24 线。
+      产物已下载核验：包内为 **Node v24.20.0**、含 **polywasm**、Mach-O arm64 **动态库**、最低 iOS 14.0，
+      sha256 `991283d8579eee225142da2bf4a897dd7d831e8b5a496a1f247fca665bc1d705`
+- [x] **P2 代码包**（`ios/`）：`NodeRuntime` / `BridgeServer`（NWListener /msg 桥）/ `BootstrapLoader`
+      / `CatyLog`（环形缓冲+磁盘滚动+自动脱敏）/ 打桩 bundle / 自检屏 / 完整 `Info.plist` / 桥接头
+- [x] **P3 代码包**：`SourceRecord`+`SourceStore`（JSON 清单）/ `BundleStore`（流式限量下载、拒绝 HTTPS→HTTP 降级、
+      MD5 校验、staging 原子提交、缓存命中、镜像复用、契约判别）/ `RuntimeCoordinator` / `KeychainStore` / 源管理界面
+- [x] **P4 代码包**（兼容层 + 播放器 + 四屏粗版）：
+      `VodModels` / `NodeRoute` / `SiteMapper` / `PlayUrlParser` / `NodeClient` + `AVPlayerEngine`
+      + 首页（站点）/ 分类列表（翻页）/ 详情（线路+选集）/ 播放（AVPlayer）→ **这一步就是"能播"**
+- [x] **零 Mac 通路已搭好**：`ios/project.yml`（XcodeGen 生成工程）+ `.github/workflows/ios.yml`
+      （借 GitHub 的 macOS 机器编译出**未签名 ipa**，自动下载 NodeMobile 并校验 sha256）
+      + [docs/09-没有Mac也能装到手机.md](docs/09-没有Mac也能装到手机.md)（Windows 上用 Sideloadly 签名安装）
+- [x] **桌面预演一次通过**：`node tools/host/p2-selftest.mjs` → `✓ P2 链路自检通过`
+      （同一份 `bootstrap.js` + 打桩 bundle 跑通 `serverStarted → /config → 站点映射 → 列表/详情/取播放地址`）
+
+**待办（按顺序）**
+
+- [ ] **你**：按 [docs/09-没有Mac也能装到手机.md](docs/09-没有Mac也能装到手机.md) 把 App 装进手机
+      （**不需要 Mac**：注册 GitHub → 推代码 → 跑 Actions → 下载 ipa → Sideloadly 用你的 Apple ID 签名）
+- [ ] **你**：装好后验证（M1/D2 闸门）：诊断页 🟢 已就绪 + `v24.20.0` + `serverStarted`，把日志发我
+- [ ] **你**（推荐，5 分钟）：抓一次真源响应（D0）
+      `node tools/host/node-host.mjs '<你的订阅地址>' --run --probe-routes`
+      → 产出 `fixtures/host/`，我据此写 `docs/contract-notes.md`（P4 的 endpoint 约定以它为准）
+- [ ] **我**：P5 代码包（按 UI 规格逐屏 + 搜索/收藏/历史/设置 + GRDB 落库）——等你的 D2/D3 结果再动手，
+      不在未验证的运行时上堆界面
+- [ ] **可选**：真正有 Mac 时走 `docs/08-P2操作卡.md` 那条路（同样的代码，编译安装更快）

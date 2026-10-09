@@ -1,0 +1,458 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>catnode iOS UI 版式设计稿</title>
+<style>
+  :root{
+    --bg:#07080A;
+    --frame:#0E1013;
+    --glass:rgba(255,255,255,.065);
+    --glass-strong:rgba(255,255,255,.10);
+    --stroke:rgba(255,255,255,.09);
+    --stroke-soft:rgba(255,255,255,.055);
+    --t1:#F2F4F7;
+    --t2:rgba(242,244,247,.66);
+    --t3:rgba(242,244,247,.38);
+    --accent:#8CDA60;
+    --accent-dim:rgba(140,218,96,.16);
+    --radius-card:12px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{
+    background:radial-gradient(1200px 600px at 20% -10%, #14181c 0%, var(--bg) 60%), var(--bg);
+    font-family:-apple-system,"SF Pro Text","PingFang SC","Microsoft YaHei",system-ui,sans-serif;
+    color:var(--t1);padding:26px 28px 30px;-webkit-font-smoothing:antialiased;
+  }
+  h1{font-size:15px;font-weight:600;letter-spacing:.2px;color:var(--t2);margin-bottom:4px}
+  .sub{font-size:12px;color:var(--t3);margin-bottom:18px}
+  .row{display:flex;gap:26px;align-items:flex-start}
+
+  /* ---------- phone frame ---------- */
+  .wrap{display:flex;flex-direction:column;gap:9px}
+  .label{font-size:12.5px;color:var(--t2);font-weight:600;display:flex;gap:7px;align-items:baseline}
+  .label b{font-weight:500;color:var(--t3);font-size:11.5px}
+  .phone{
+    width:390px;height:844px;border-radius:52px;background:var(--frame);
+    border:1px solid rgba(255,255,255,.11);position:relative;overflow:hidden;
+    box-shadow:0 26px 70px rgba(0,0,0,.62), inset 0 0 0 1px rgba(255,255,255,.03);
+    display:flex;flex-direction:column;
+  }
+  .notch{position:absolute;top:11px;left:50%;transform:translateX(-50%);width:116px;height:32px;border-radius:20px;background:#000;z-index:60}
+  .status{display:flex;justify-content:space-between;align-items:center;padding:16px 30px 4px;font-size:13.5px;font-weight:600;letter-spacing:.2px;z-index:50;position:relative}
+  .status .r{display:flex;gap:5px;align-items:center;opacity:.92}
+  .bar{width:17px;height:11px;border-radius:3px;border:1.4px solid rgba(255,255,255,.7);position:relative}
+  .bar::after{content:"";position:absolute;inset:2px 4.5px 2px 2px;background:var(--t1);border-radius:1px}
+  .sig{width:16px;height:11px;background:
+      linear-gradient(to right, rgba(255,255,255,.85) 0 2.4px, transparent 2.4px 4px,
+      rgba(255,255,255,.85) 4px 6.4px, transparent 6.4px 8px,
+      rgba(255,255,255,.85) 8px 10.4px, transparent 10.4px 12px,
+      rgba(255,255,255,.85) 12px 16px);border-radius:1px}
+
+  /* ---------- scroll area ---------- */
+  .scroll{flex:1;overflow:hidden;position:relative}
+  .pad{padding:0 16px}
+
+  /* ---------- glass ---------- */
+  .glass{background:var(--glass);border:1px solid var(--stroke);backdrop-filter:blur(24px) saturate(160%)}
+  .pill{border-radius:999px;padding:7px 13px;font-size:12.5px;color:var(--t2);display:inline-flex;gap:6px;align-items:center}
+  .pill.on{background:var(--accent-dim);border-color:rgba(140,218,96,.35);color:var(--accent)}
+  .dot{width:6px;height:6px;border-radius:50%;background:var(--accent);box-shadow:0 0 8px var(--accent)}
+
+  /* ---------- titles ---------- */
+  .lt{font-size:32px;font-weight:700;letter-spacing:-.6px;padding:6px 16px 12px}
+  .navrow{display:flex;justify-content:space-between;align-items:flex-end;padding:2px 16px 12px}
+  .navrow .lt{padding:0}
+  .actions{display:flex;gap:10px;padding-bottom:6px}
+  .ibtn{width:34px;height:34px;border-radius:50%;display:grid;place-items:center;background:var(--glass);border:1px solid var(--stroke);backdrop-filter:blur(20px)}
+
+  .sec{display:flex;justify-content:space-between;align-items:center;padding:20px 16px 11px}
+  .sec h2{font-size:17px;font-weight:650;letter-spacing:-.2px}
+  .sec span{font-size:12.5px;color:var(--t3)}
+
+  /* ---------- posters ---------- */
+  .hscroll{display:flex;gap:11px;padding:0 16px 2px;overflow:hidden}
+  .pcard{width:112px;flex:0 0 auto}
+  .poster{width:112px;height:168px;border-radius:var(--radius-card);position:relative;overflow:hidden;
+    border:1px solid rgba(255,255,255,.07)}
+  .poster::after{content:"";position:absolute;inset:0;background:linear-gradient(160deg,rgba(255,255,255,.13),transparent 42%,rgba(0,0,0,.35))}
+  .poster .badge{position:absolute;left:7px;top:7px;font-size:10px;font-weight:600;color:#0b0d0f;background:var(--accent);padding:2px 6px;border-radius:5px;z-index:2}
+  .poster .rem{position:absolute;left:0;right:0;bottom:0;font-size:10px;color:rgba(255,255,255,.9);background:linear-gradient(transparent,rgba(0,0,0,.72));padding:14px 7px 6px;z-index:2}
+  .pt{font-size:12.5px;color:var(--t2);margin-top:7px;line-height:1.3;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+  .p1{background:linear-gradient(145deg,#2a4b7c,#12203a 62%,#4a6fa5)}
+  .p2{background:linear-gradient(145deg,#7c3a2a,#2a1410 62%,#c2683f)}
+  .p3{background:linear-gradient(145deg,#2f5d4a,#0f2019 60%,#4e9c78)}
+  .p4{background:linear-gradient(145deg,#4b2a6b,#1a0f28 60%,#8a5cc0)}
+  .p5{background:linear-gradient(145deg,#6b5a2a,#241d0d 60%,#c9a44f)}
+  .p6{background:linear-gradient(145deg,#2a5c6b,#0d1f24 60%,#4fa3b8)}
+  .p7{background:linear-gradient(145deg,#6b2a4a,#220d18 60%,#c0507f)}
+  .p8{background:linear-gradient(145deg,#3a3f4a,#12151a 60%,#7d8798)}
+
+  /* ---------- hero / continue ---------- */
+  .hero{margin:0 16px;border-radius:16px;overflow:hidden;position:relative;height:188px;border:1px solid var(--stroke)}
+  .hero .bgwrap{position:absolute;inset:0;background:linear-gradient(120deg,#1b2b3f,#0d151f 55%,#243b57)}
+  .hero .veil{position:absolute;inset:0;background:linear-gradient(90deg,rgba(0,0,0,.86) 26%,rgba(0,0,0,.25) 70%,transparent)}
+  .hero .ct{position:absolute;left:16px;right:16px;bottom:15px}
+  .hero .k{font-size:11px;color:var(--accent);font-weight:600;letter-spacing:.4px;margin-bottom:5px}
+  .hero h3{font-size:20px;font-weight:680;letter-spacing:-.3px}
+  .hero .meta{font-size:11.5px;color:var(--t2);margin:5px 0 11px}
+  .playbtn{border-radius:999px;background:var(--accent);color:#0a0d08;font-size:13px;font-weight:650;padding:8px 16px;display:inline-flex;gap:6px;align-items:center}
+  .prog{height:3px;border-radius:2px;background:rgba(255,255,255,.17);margin-top:12px;overflow:hidden}
+  .prog i{display:block;height:100%;width:42%;background:var(--accent)}
+
+  /* ---------- tab bar ---------- */
+  .tabbar{position:absolute;left:14px;right:14px;bottom:14px;height:64px;border-radius:26px;
+    background:rgba(22,24,28,.72);border:1px solid var(--stroke);backdrop-filter:blur(28px) saturate(180%);
+    display:flex;align-items:center;justify-content:space-around;z-index:40;
+    box-shadow:0 12px 34px rgba(0,0,0,.5)}
+  .tab{display:flex;flex-direction:column;align-items:center;gap:4px;font-size:10.5px;color:var(--t3)}
+  .tab.on{color:var(--accent)}
+  .tab svg{width:23px;height:23px}
+  .searchbar{position:absolute;left:14px;right:14px;bottom:14px;height:52px;border-radius:26px;
+    background:rgba(22,24,28,.78);border:1px solid var(--stroke);backdrop-filter:blur(28px);
+    display:flex;align-items:center;gap:9px;padding:0 16px;color:var(--t3);font-size:14px;z-index:40}
+
+  /* ---------- category screen ---------- */
+  .catgrid{display:grid;grid-template-columns:1fr 1fr;gap:10px;padding:0 16px}
+  .cat{border-radius:14px;padding:14px;height:74px;display:flex;flex-direction:column;justify-content:space-between;
+    background:var(--glass);border:1px solid var(--stroke)}
+  .cat b{font-size:15px;font-weight:600}
+  .cat i{font-size:11px;color:var(--t3);font-style:normal}
+  .cat:nth-child(1){background:linear-gradient(140deg,rgba(140,218,96,.17),rgba(255,255,255,.03))}
+  .chips{display:flex;gap:8px;padding:2px 16px 14px;overflow:hidden}
+
+  /* ---------- detail screen ---------- */
+  .backdrop{position:absolute;inset:0;background:linear-gradient(170deg,#2c4258 0%,#0d1319 46%,#0b0d10 100%)}
+  .blurbg{position:absolute;top:-40px;left:-30px;right:-30px;height:330px;
+    background:radial-gradient(420px 260px at 30% 20%, rgba(120,180,240,.30), transparent 70%),
+               radial-gradient(360px 220px at 75% 8%, rgba(140,218,96,.20), transparent 70%);
+    filter:blur(14px)}
+  .detailhead{position:relative;display:flex;gap:14px;padding:8px 16px 0}
+  .bigposter{width:126px;height:189px;border-radius:14px;flex:0 0 auto;border:1px solid rgba(255,255,255,.13);
+    background:linear-gradient(150deg,#3a5f8f,#16233a 58%,#6d93c4);position:relative;overflow:hidden}
+  .bigposter::after{content:"";position:absolute;inset:0;background:linear-gradient(160deg,rgba(255,255,255,.16),transparent 45%)}
+  .dinfo h3{font-size:22px;font-weight:700;letter-spacing:-.4px;margin-bottom:8px}
+  .metarow{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:9px}
+  .mchip{font-size:11px;color:var(--t2);background:var(--glass);border:1px solid var(--stroke-soft);border-radius:6px;padding:3px 7px}
+  .score{font-size:13px;color:var(--accent);font-weight:650;margin-bottom:8px}
+  .cta{display:flex;gap:9px;align-items:center;margin-top:4px}
+  .ctabtn{border-radius:999px;background:rgba(255,255,255,.10);border:1px solid var(--stroke);width:38px;height:38px;display:grid;place-items:center}
+  .desc{font-size:12.5px;color:var(--t2);line-height:1.62;padding:16px 16px 0}
+  .desc .more{color:var(--accent)}
+  .seg{display:flex;gap:7px;padding:14px 16px 11px}
+  .eps{display:grid;grid-template-columns:repeat(5,1fr);gap:9px;padding:0 16px}
+  .ep{height:42px;border-radius:10px;display:grid;place-items:center;font-size:13.5px;color:var(--t2);
+    background:var(--glass);border:1px solid var(--stroke-soft)}
+  .ep.on{background:var(--accent);color:#0a0d08;font-weight:650;border-color:transparent}
+  .ep.watched{color:var(--t3)}
+
+  /* ---------- player ---------- */
+  .stage{position:absolute;inset:0;background:
+    radial-gradient(760px 440px at 40% 28%, rgba(118,168,224,.34), transparent 72%),
+    radial-gradient(560px 320px at 80% 66%, rgba(140,218,96,.14), transparent 70%),
+    linear-gradient(180deg,#0e1620 0%,#0a1119 46%,#06090c 100%)}
+  .scene{position:absolute;inset:0;z-index:5}
+  .scene i{position:absolute;display:block;filter:blur(26px);opacity:.5}
+  .scene .s1{left:-40px;bottom:150px;width:330px;height:180px;border-radius:50%;background:linear-gradient(120deg,#2c4a6b,#16283c)}
+  .scene .s2{right:-50px;bottom:190px;width:280px;height:150px;border-radius:50%;background:linear-gradient(120deg,#1e3348,#243b2e)}
+  .scene .s3{left:120px;top:210px;width:150px;height:150px;border-radius:50%;background:radial-gradient(circle,rgba(220,235,255,.30),transparent 70%);filter:blur(18px)}
+  .scene .vig{position:absolute;inset:0;background:radial-gradient(120% 90% at 50% 40%,transparent 40%,rgba(0,0,0,.55) 100%);filter:none;opacity:1}
+  .pcontrols{position:absolute;inset:0;display:flex;flex-direction:column;justify-content:space-between;z-index:30}
+  .ptop{display:flex;align-items:center;gap:11px;padding:16px 18px}
+  .ptop .t{flex:1;font-size:14px;font-weight:600;color:rgba(255,255,255,.92)}
+  .pcenter{display:grid;place-items:center;margin-top:-40px}
+  .bigplay{width:66px;height:66px;border-radius:50%;background:rgba(255,255,255,.14);border:1px solid rgba(255,255,255,.2);
+    backdrop-filter:blur(20px);display:grid;place-items:center}
+  .pbot{padding:0 20px 26px}
+  .line{display:flex;justify-content:space-between;font-size:11.5px;color:rgba(255,255,255,.72);margin-bottom:7px;font-variant-numeric:tabular-nums}
+  .pbar{height:4px;border-radius:3px;background:rgba(255,255,255,.22);position:relative;margin-bottom:18px}
+  .pbar .buf{position:absolute;inset:0 auto 0 0;width:58%;background:rgba(255,255,255,.3);border-radius:3px}
+  .pbar .cur{position:absolute;inset:0 auto 0 0;width:37%;background:var(--accent);border-radius:3px}
+  .pbar .knob{position:absolute;left:37%;top:50%;transform:translate(-50%,-50%);width:13px;height:13px;border-radius:50%;background:#fff}
+  .prow{display:flex;justify-content:space-between;align-items:center}
+  .pitem{display:flex;flex-direction:column;align-items:center;gap:5px;font-size:10.5px;color:rgba(255,255,255,.78)}
+  .pitem .ic{width:40px;height:40px;border-radius:12px;background:rgba(255,255,255,.09);border:1px solid rgba(255,255,255,.11);display:grid;place-items:center;backdrop-filter:blur(18px)}
+  .pitem.hot .ic{background:var(--accent-dim);border-color:rgba(140,218,96,.32)}
+  .dm{position:absolute;font-size:13.5px;font-weight:600;color:rgba(255,255,255,.5);text-shadow:0 1px 4px rgba(0,0,0,.6);z-index:20}
+  .dm.a{left:34px;top:222px;color:rgba(255,255,255,.55)}
+  .dm.b{right:30px;top:262px;color:rgba(180,220,255,.5);font-size:12.5px}
+  .dm.c{left:66px;top:300px;color:rgba(255,214,180,.48);font-size:12.5px}
+
+  /* ---------- settings ---------- */
+  .grp{margin:0 16px 18px}
+  .grp .gt{font-size:12px;color:var(--t3);padding:0 4px 8px;letter-spacing:.3px}
+  .list{border-radius:14px;overflow:hidden;background:var(--glass);border:1px solid var(--stroke)}
+  .li{display:flex;align-items:center;gap:12px;padding:13px 14px;border-bottom:1px solid var(--stroke-soft);font-size:14px}
+  .li:last-child{border-bottom:0}
+  .li .ic{width:26px;height:26px;border-radius:8px;display:grid;place-items:center;background:rgba(255,255,255,.08);flex:0 0 auto}
+  .li .v{margin-left:auto;color:var(--t3);font-size:12.5px;display:flex;align-items:center;gap:6px}
+  .sw{width:41px;height:25px;border-radius:999px;background:var(--accent);position:relative}
+  .sw::after{content:"";position:absolute;top:2.5px;right:2.5px;width:20px;height:20px;border-radius:50%;background:#fff}
+  .sw.off{background:rgba(255,255,255,.16)}
+  .sw.off::after{right:auto;left:2.5px}
+  .swatches{display:flex;gap:8px}
+  .swat{width:20px;height:20px;border-radius:50%;border:2px solid transparent}
+  .swat.on{border-color:#fff}
+  svg{display:block}
+</style>
+</head>
+<body>
+  <h1>catnode · iPhone 版式设计稿</h1>
+  <div class="sub">390×844 · 深色 · Liquid Glass 分层 · 强调色取自源配置自带调色板（#8CDA60）</div>
+  <div class="row">
+
+  <!-- ============ 1 首页 ============ -->
+  <div class="wrap">
+    <div class="label">① 首页 <b>聚合推荐 · 继续观看</b></div>
+    <div class="phone">
+      <div class="notch"></div>
+      <div class="status"><span>9:41</span><span class="r"><span class="sig"></span><span class="bar"></span></span></div>
+      <div class="scroll">
+        <div class="navrow">
+          <div class="lt">首页</div>
+          <div class="actions">
+            <div class="ibtn"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#F2F4F7" stroke-width="2.1"><circle cx="11" cy="11" r="7"/><path d="M16.5 16.5 21 21"/></svg></div>
+            <div class="pill glass" style="height:34px"><span class="dot"></span>运行中</div>
+          </div>
+        </div>
+
+        <div class="hero">
+          <div class="bgwrap"></div><div class="veil"></div>
+          <div class="ct">
+            <div class="k">继续观看</div>
+            <h3>长夜将明</h3>
+            <div class="meta">第 3 集 · 已看 12:08 / 28:40</div>
+            <div class="playbtn"><svg width="12" height="12" viewBox="0 0 24 24" fill="#0a0d08"><path d="M8 5v14l11-7z"/></svg>继续播放</div>
+            <div class="prog"><i></i></div>
+          </div>
+        </div>
+
+        <div class="sec"><h2>推荐</h2><span>换一批 · 更多 ›</span></div>
+        <div class="hscroll">
+          <div class="pcard"><div class="poster p1"><div class="badge">更新10</div><div class="rem">更新至第 10 集</div></div><div class="pt">星轨</div></div>
+          <div class="pcard"><div class="poster p2"><div class="rem">全 24 集</div></div><div class="pt">第七日</div></div>
+          <div class="pcard"><div class="poster p3"><div class="badge">热</div><div class="rem">蓝光 4K</div></div><div class="pt">山与海之间</div></div>
+          <div class="pcard"><div class="poster p4"><div class="rem">已完结</div></div><div class="pt">雾中列车</div></div>
+        </div>
+
+        <div class="sec"><h2>电影</h2><span>更多 ›</span></div>
+        <div class="hscroll">
+          <div class="pcard"><div class="poster p5"><div class="rem">1080P</div></div><div class="pt">风起时节</div></div>
+          <div class="pcard"><div class="poster p6"><div class="rem">4K HDR</div></div><div class="pt">孤舟</div></div>
+          <div class="pcard"><div class="poster p7"><div class="rem">蓝光</div></div><div class="pt">回声</div></div>
+          <div class="pcard"><div class="poster p8"><div class="rem">国语</div></div><div class="pt">夜航西飞</div></div>
+        </div>
+      </div>
+      <div class="tabbar">
+        <div class="tab on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M4 10.5 12 4l8 6.5V20a1 1 0 0 1-1 1h-4v-6H9v6H5a1 1 0 0 1-1-1z"/></svg>首页</div>
+        <div class="tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><rect x="3.5" y="3.5" width="7" height="7" rx="2"/><rect x="13.5" y="3.5" width="7" height="7" rx="2"/><rect x="3.5" y="13.5" width="7" height="7" rx="2"/><rect x="13.5" y="13.5" width="7" height="7" rx="2"/></svg>分类</div>
+        <div class="tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><circle cx="11" cy="11" r="7"/><path d="M16.5 16.5 21 21"/></svg>搜索</div>
+        <div class="tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M6.5 3.5h11v17l-5.5-3.6L6.5 20.5z"/></svg>片库</div>
+        <div class="tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><circle cx="12" cy="12" r="3.2"/><path d="M12 3.5v2M12 18.5v2M3.5 12h2M18.5 12h2M6 6l1.4 1.4M16.6 16.6 18 18M18 6l-1.4 1.4M7.4 16.6 6 18"/></svg>设置</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 2 分类 ============ -->
+  <div class="wrap">
+    <div class="label">② 分类 <b>站点 → 分类 → 筛选</b></div>
+    <div class="phone">
+      <div class="notch"></div>
+      <div class="status"><span>9:41</span><span class="r"><span class="sig"></span><span class="bar"></span></span></div>
+      <div class="scroll">
+        <div class="navrow" style="padding-bottom:10px">
+          <div class="lt">分类</div>
+          <div class="actions"><div class="pill glass" style="height:34px"><span class="dot"></span>3 个源</div></div>
+        </div>
+        <div class="chips">
+          <div class="pill glass on">🐉神族九帝</div>
+          <div class="pill glass">💢repl</div>
+          <div class="pill glass">AList</div>
+          <div class="pill glass">Emby</div>
+        </div>
+        <div class="catgrid">
+          <div class="cat"><b>电影</b><i>2 480 部</i></div>
+          <div class="cat"><b>电视剧</b><i>1 932 部</i></div>
+          <div class="cat"><b>综艺</b><i>846 部</i></div>
+          <div class="cat"><b>动漫</b><i>1 214 部</i></div>
+          <div class="cat"><b>纪录片</b><i>512 部</i></div>
+          <div class="cat"><b>体育</b><i>208 部</i></div>
+        </div>
+        <div class="sec"><h2>筛选</h2><span>可多选</span></div>
+        <div class="chips" style="flex-wrap:wrap;gap:8px">
+          <div class="pill glass">类型 ▾</div>
+          <div class="pill glass">地区 ▾</div>
+          <div class="pill glass">年份 ▾</div>
+          <div class="pill glass on">按热度 ▾</div>
+        </div>
+        <div class="sec"><h2>结果</h2><span>3 列 · 无限滚动</span></div>
+        <div class="hscroll" style="align-items:flex-start">
+          <div class="pcard" style="width:104px"><div class="poster" style="width:104px;height:156px" ><div class="badge">VIP</div></div><div class="pt">星轨</div></div>
+          <div class="pcard" style="width:104px"><div class="poster p3" style="width:104px;height:156px"></div><div class="pt">山与海之间</div></div>
+          <div class="pcard" style="width:104px"><div class="poster p6" style="width:104px;height:156px"></div><div class="pt">孤舟</div></div>
+        </div>
+      </div>
+      <div class="tabbar">
+        <div class="tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M4 10.5 12 4l8 6.5V20a1 1 0 0 1-1 1h-4v-6H9v6H5a1 1 0 0 1-1-1z"/></svg>首页</div>
+        <div class="tab on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><rect x="3.5" y="3.5" width="7" height="7" rx="2"/><rect x="13.5" y="3.5" width="7" height="7" rx="2"/><rect x="3.5" y="13.5" width="7" height="7" rx="2"/><rect x="13.5" y="13.5" width="7" height="7" rx="2"/></svg>分类</div>
+        <div class="tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><circle cx="11" cy="11" r="7"/><path d="M16.5 16.5 21 21"/></svg>搜索</div>
+        <div class="tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M6.5 3.5h11v17l-5.5-3.6L6.5 20.5z"/></svg>片库</div>
+        <div class="tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><circle cx="12" cy="12" r="3.2"/><path d="M12 3.5v2M12 18.5v2M3.5 12h2M18.5 12h2M6 6l1.4 1.4M16.6 16.6 18 18M18 6l-1.4 1.4M7.4 16.6 6 18"/></svg>设置</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 3 详情 ============ -->
+  <div class="wrap">
+    <div class="label">③ 详情 <b>沉浸头图 · 线路 · 选集</b></div>
+    <div class="phone">
+      <div class="notch"></div>
+      <div class="backdrop"></div><div class="blurbg"></div>
+      <div class="status" style="position:relative;z-index:20"><span>9:41</span><span class="r"><span class="sig"></span><span class="bar"></span></span></div>
+      <div class="scroll" style="position:relative;z-index:20">
+        <div style="display:flex;justify-content:space-between;padding:6px 16px 14px">
+          <div class="ibtn"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#F2F4F7" stroke-width="2.2"><path d="M14.5 5 8 12l6.5 7"/></svg></div>
+          <div style="display:flex;gap:10px">
+            <div class="ibtn"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#F2F4F7" stroke-width="2"><path d="M12 15V4M8 8l4-4 4 4M5 15v4a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-4"/></svg></div>
+          </div>
+        </div>
+        <div class="detailhead">
+          <div class="bigposter"></div>
+          <div class="dinfo">
+            <h3>长夜将明</h3>
+            <div class="metarow"><span class="mchip">2026</span><span class="mchip">剧情</span><span class="mchip">中国大陆</span><span class="mchip">全 24 集</span></div>
+            <div class="score">★ 8.7 <span style="color:var(--t3);font-weight:400">· 12.4 万人评价</span></div>
+            <div class="cta">
+              <div class="playbtn" style="padding:9px 17px"><svg width="12" height="12" viewBox="0 0 24 24" fill="#0a0d08"><path d="M8 5v14l11-7z"/></svg>播放</div>
+              <div class="ctabtn"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#F2F4F7" stroke-width="1.9"><path d="M12 20s-7-4.6-7-9.4A3.9 3.9 0 0 1 12 8a3.9 3.9 0 0 1 7 2.6C19 15.4 12 20 12 20z"/></svg></div>
+              <div class="ctabtn"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#F2F4F7" stroke-width="1.9"><path d="M12 16V6m0 0L8.5 9.5M12 6l3.5 3.5M5 15v3.5a.5.5 0 0 0 .5.5h13a.5.5 0 0 0 .5-.5V15"/></svg></div>
+            </div>
+          </div>
+        </div>
+        <div class="desc">
+          一场连月的阴雨让临江小城陷入停滞，三名互不相识的人在同一个夜晚被卷入同一桩旧案，随着水位上涨，被掩埋的真相逐层浮出……<span class="more">展开</span>
+        </div>
+        <div class="seg">
+          <div class="pill glass on">线路一 · 4K</div>
+          <div class="pill glass">线路二</div>
+          <div class="pill glass">网盘</div>
+        </div>
+        <div class="eps">
+          <div class="ep on">3</div><div class="ep watched">1</div><div class="ep watched">2</div><div class="ep">4</div><div class="ep">5</div>
+          <div class="ep">6</div><div class="ep">7</div><div class="ep">8</div><div class="ep">9</div><div class="ep">10</div>
+          <div class="ep">11</div><div class="ep">12</div><div class="ep">13</div><div class="ep">14</div><div class="ep">15</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 4 播放 ============ -->
+  <div class="wrap">
+    <div class="label">④ 播放 <b>手势 · 弹幕 · 线路切换</b></div>
+    <div class="phone" style="background:#05070a">
+      <div class="notch"></div>
+      <div class="stage"></div>
+      <div class="scene"><i class="s1"></i><i class="s2"></i><i class="s3"></i><i class="vig"></i></div>
+      <div class="pill glass" style="position:absolute;top:70px;right:18px;font-size:11px;z-index:25"><span class="dot"></span>线路一 · 4K · 硬解</div>
+      <div class="dm a">这段配乐绝了</div>
+      <div class="dm b">前方高能预警</div>
+      <div class="dm c">第三集开始好看了</div>
+      <div class="pcontrols">
+        <div class="ptop">
+          <div class="ibtn" style="background:rgba(255,255,255,.10)"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#F2F4F7" stroke-width="2.2"><path d="M14.5 5 8 12l6.5 7"/></svg></div>
+          <div class="t">长夜将明 · 第 3 集</div>
+          <div class="ibtn" style="background:rgba(255,255,255,.10)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#F2F4F7" stroke-width="1.9"><path d="M3 20h18M5 16.5 8.5 6l7 12L19 9"/></svg></div>
+          <div class="ibtn" style="background:rgba(255,255,255,.10)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#F2F4F7" stroke-width="1.9"><rect x="3" y="5" width="18" height="14" rx="2"/><rect x="8" y="9.5" width="8" height="5" rx="1"/></svg></div>
+        </div>
+        <div class="pcenter">
+          <div class="bigplay"><svg width="26" height="26" viewBox="0 0 24 24" fill="rgba(255,255,255,.92)"><path d="M8.5 5h3v14h-3zM12.5 5h3v14h-3z"/></svg></div>
+        </div>
+        <div class="pbot">
+          <div class="line"><span>12:08</span><span>-16:32</span></div>
+          <div class="pbar"><div class="buf"></div><div class="cur"></div><div class="knob"></div></div>
+          <div class="prow">
+            <div class="pitem"><div class="ic"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,.85)" stroke-width="1.8"><path d="M12 5v14M7 8v8M17 8v8"/></svg></div>下一集</div>
+            <div class="pitem"><div class="ic"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,.85)" stroke-width="1.8"><rect x="3.5" y="4.5" width="17" height="15" rx="2"/><path d="M3.5 9.5h17M8 4.5v5"/></svg></div>选集</div>
+            <div class="pitem hot"><div class="ic"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#8CDA60" stroke-width="1.8"><path d="M4 6h16M4 12h10M4 18h13"/></svg></div>弹幕</div>
+            <div class="pitem"><div class="ic"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,.85)" stroke-width="1.8"><path d="M3 15h18M6 15V9m4 6V6m4 9v-4m4 4V7"/></svg></div>音轨</div>
+            <div class="pitem"><div class="ic"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,.85)" stroke-width="1.8"><path d="M12 4v16M8 8H5v8h3m11-8h-3v8h3"/></svg></div>线路</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 5 设置 ============ -->
+  <div class="wrap">
+    <div class="label">⑤ 设置 <b>源 / 账号 / 播放器 / 诊断</b></div>
+    <div class="phone">
+      <div class="notch"></div>
+      <div class="status"><span>9:41</span><span class="r"><span class="sig"></span><span class="bar"></span></span></div>
+      <div class="scroll">
+        <div class="lt">设置</div>
+
+        <div class="grp">
+          <div class="gt">源</div>
+          <div class="list">
+            <div class="li"><div class="ic"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#F2F4F7" stroke-width="1.9"><path d="M4 8h16M4 16h16M8 4v16M16 4v16"/></svg></div>源管理
+              <span class="v">3 个 · 全部正常 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="rgba(242,244,247,.4)" stroke-width="2.4"><path d="M9.5 5 16 12l-6.5 7"/></svg></span></div>
+            <div class="li"><div class="ic"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#F2F4F7" stroke-width="1.9"><path d="M20 12a8 8 0 1 1-2.3-5.6M20 4v4h-4"/></svg></div>检查更新
+              <span class="v">2 分钟前 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="rgba(242,244,247,.4)" stroke-width="2.4"><path d="M9.5 5 16 12l-6.5 7"/></svg></span></div>
+          </div>
+        </div>
+
+        <div class="grp">
+          <div class="gt">账号</div>
+          <div class="list">
+            <div class="li"><div class="ic"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#F2F4F7" stroke-width="1.9"><circle cx="12" cy="8.5" r="3.5"/><path d="M5 20a7 7 0 0 1 14 0"/></svg></div>网盘账号
+              <span class="v">4 个已登录 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="rgba(242,244,247,.4)" stroke-width="2.4"><path d="M9.5 5 16 12l-6.5 7"/></svg></span></div>
+          </div>
+        </div>
+
+        <div class="grp">
+          <div class="gt">播放器</div>
+          <div class="list">
+            <div class="li"><div class="ic"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#F2F4F7" stroke-width="1.9"><path d="M4 6h16v12H4z"/><path d="M9 10.5v3l4-1.5z"/></svg></div>硬件解码<span class="v"><div class="sw"></div></span></div>
+            <div class="li"><div class="ic"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#F2F4F7" stroke-width="1.9"><path d="M4 6h16M4 12h16M4 18h16"/></svg></div>默认倍速<span class="v">1.0× ›</span></div>
+            <div class="li"><div class="ic"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#F2F4F7" stroke-width="1.9"><path d="M12 5v14M5 12h14"/></svg></div>自动跳过片头尾<span class="v"><div class="sw off"></div></span></div>
+            <div class="li"><div class="ic"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#F2F4F7" stroke-width="1.9"><path d="M4 6h16M4 12h10M4 18h13"/></svg></div>弹幕<span class="v"><div class="sw"></div></span></div>
+          </div>
+        </div>
+
+        <div class="grp">
+          <div class="gt">外观</div>
+          <div class="list">
+            <div class="li"><div class="ic"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#F2F4F7" stroke-width="1.9"><circle cx="12" cy="12" r="8"/><path d="M12 4v16"/></svg></div>主题色
+              <span class="v"><span class="swatches">
+                <span class="swat on" style="background:#8CDA60"></span>
+                <span class="swat" style="background:#6FA8F5"></span>
+                <span class="swat" style="background:#F0A868"></span>
+                <span class="swat" style="background:#D97BB0"></span>
+              </span></span></div>
+            <div class="li"><div class="ic"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#F2F4F7" stroke-width="1.9"><path d="M4 12a8 8 0 1 0 16 0 8 8 0 0 0-16 0z"/><path d="M12 4v8h8"/></svg></div>显示模式<span class="v">深色 ›</span></div>
+          </div>
+        </div>
+
+        <div class="grp">
+          <div class="gt">运行时诊断</div>
+          <div class="list">
+            <div class="li"><div class="ic"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#8CDA60" stroke-width="1.9"><path d="M3 12h4l2.5-6 5 12L17 12h4"/></svg></div>
+              运行状态
+              <span class="v"><span class="dot" style="display:inline-block"></span> 127.0.0.1:54321 · 62 MB</span></div>
+            <div class="li"><div class="ic"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#F2F4F7" stroke-width="1.9"><path d="M6 4h9l5 5v11H6z"/><path d="M9 12h6M9 16h4"/></svg></div>运行日志<span class="v">导出 ›</span></div>
+          </div>
+        </div>
+      </div>
+      <div class="tabbar">
+        <div class="tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M4 10.5 12 4l8 6.5V20a1 1 0 0 1-1 1h-4v-6H9v6H5a1 1 0 0 1-1-1z"/></svg>首页</div>
+        <div class="tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><rect x="3.5" y="3.5" width="7" height="7" rx="2"/><rect x="13.5" y="3.5" width="7" height="7" rx="2"/><rect x="3.5" y="13.5" width="7" height="7" rx="2"/><rect x="13.5" y="13.5" width="7" height="7" rx="2"/></svg>分类</div>
+        <div class="tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><circle cx="11" cy="11" r="7"/><path d="M16.5 16.5 21 21"/></svg>搜索</div>
+        <div class="tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M6.5 3.5h11v17l-5.5-3.6L6.5 20.5z"/></svg>片库</div>
+        <div class="tab on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><circle cx="12" cy="12" r="3.2"/><path d="M12 3.5v2M12 18.5v2M3.5 12h2M18.5 12h2M6 6l1.4 1.4M16.6 16.6 18 18M18 6l-1.4 1.4M7.4 16.6 6 18"/></svg>设置</div>
+      </div>
+    </div>
+  </div>
+
+  </div>
+</body>
+</html>

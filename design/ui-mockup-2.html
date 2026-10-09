@@ -1,0 +1,248 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>catnode iOS UI 版式设计稿（2）</title>
+<style>
+  :root{
+    --bg:#07080A;--frame:#0E1013;--glass:rgba(255,255,255,.065);--stroke:rgba(255,255,255,.09);
+    --stroke-soft:rgba(255,255,255,.055);--t1:#F2F4F7;--t2:rgba(242,244,247,.66);--t3:rgba(242,244,247,.38);
+    --accent:#8CDA60;--accent-dim:rgba(140,218,96,.16);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:radial-gradient(1200px 600px at 20% -10%, #14181c 0%, var(--bg) 60%), var(--bg);
+    font-family:-apple-system,"SF Pro Text","PingFang SC","Microsoft YaHei",system-ui,sans-serif;
+    color:var(--t1);padding:26px 28px 30px;-webkit-font-smoothing:antialiased}
+  h1{font-size:15px;font-weight:600;color:var(--t2);margin-bottom:4px}
+  .sub{font-size:12px;color:var(--t3);margin-bottom:18px}
+  .row{display:flex;gap:26px;align-items:flex-start}
+  .wrap{display:flex;flex-direction:column;gap:9px}
+  .label{font-size:12.5px;color:var(--t2);font-weight:600}.label b{font-weight:500;color:var(--t3);font-size:11.5px}
+  .phone{width:390px;height:844px;border-radius:52px;background:var(--frame);border:1px solid rgba(255,255,255,.11);
+    position:relative;overflow:hidden;box-shadow:0 26px 70px rgba(0,0,0,.62);display:flex;flex-direction:column}
+  .notch{position:absolute;top:11px;left:50%;transform:translateX(-50%);width:116px;height:32px;border-radius:20px;background:#000;z-index:60}
+  .status{display:flex;justify-content:space-between;padding:16px 30px 4px;font-size:13.5px;font-weight:600;z-index:50;position:relative}
+  .status .r{display:flex;gap:5px;align-items:center;opacity:.92}
+  .bar{width:17px;height:11px;border-radius:3px;border:1.4px solid rgba(255,255,255,.7);position:relative}
+  .bar::after{content:"";position:absolute;inset:2px 4.5px 2px 2px;background:var(--t1);border-radius:1px}
+  .sig{width:16px;height:11px;background:linear-gradient(to right, rgba(255,255,255,.85) 0 2.4px,transparent 2.4px 4px,rgba(255,255,255,.85) 4px 6.4px,transparent 6.4px 8px,rgba(255,255,255,.85) 8px 10.4px,transparent 10.4px 12px,rgba(255,255,255,.85) 12px 16px);border-radius:1px}
+  .scroll{flex:1;overflow:hidden;position:relative}
+  .glass{background:var(--glass);border:1px solid var(--stroke);backdrop-filter:blur(24px) saturate(160%)}
+  .pill{border-radius:999px;padding:7px 13px;font-size:12.5px;color:var(--t2);display:inline-flex;gap:6px;align-items:center}
+  .pill.on{background:var(--accent-dim);border-color:rgba(140,218,96,.35);color:var(--accent)}
+  .dot{width:6px;height:6px;border-radius:50%;background:var(--accent);box-shadow:0 0 8px var(--accent)}
+  .lt{font-size:32px;font-weight:700;letter-spacing:-.6px;padding:6px 16px 12px}
+  .sec{display:flex;justify-content:space-between;align-items:center;padding:18px 16px 10px}
+  .sec h2{font-size:16px;font-weight:650}.sec span{font-size:12.5px;color:var(--t3)}
+  .chips{display:flex;gap:8px;padding:0 16px 12px;flex-wrap:wrap}
+  /* 搜索框 */
+  .searchfield{margin:2px 16px 12px;height:44px;border-radius:14px;background:rgba(255,255,255,.08);
+    border:1px solid rgba(140,218,96,.35);display:flex;align-items:center;gap:10px;padding:0 13px;font-size:15px}
+  .caret{width:1.5px;height:18px;background:var(--accent);animation:none}
+  .seg2{display:flex;gap:6px;padding:0 16px 12px}
+  .seg2 .pill{padding:6px 11px;font-size:12px}
+  /* 结果卡片 */
+  .res{margin:0 16px 10px;border-radius:14px;padding:11px;display:flex;gap:12px;background:var(--glass);border:1px solid var(--stroke)}
+  .rimg{width:74px;height:104px;border-radius:10px;flex:0 0 auto;position:relative;overflow:hidden;
+    background:linear-gradient(150deg,#3a5f8f,#16233a 58%,#6d93c4)}
+  .rimg::after{content:"";position:absolute;inset:0;background:linear-gradient(160deg,rgba(255,255,255,.15),transparent 45%)}
+  .res h3{font-size:15.5px;font-weight:650;margin-bottom:6px}
+  .res .mm{font-size:11.5px;color:var(--t3);margin-bottom:8px}
+  .srcs{display:flex;gap:5px;flex-wrap:wrap}
+  .sb{font-size:10.5px;color:var(--t2);background:rgba(255,255,255,.08);border:1px solid var(--stroke-soft);border-radius:6px;padding:2px 6px}
+  .sb.a{color:var(--accent);border-color:rgba(140,218,96,.3);background:var(--accent-dim)}
+  .playmini{margin-left:auto;align-self:center;width:36px;height:36px;border-radius:50%;background:var(--accent);display:grid;place-items:center;flex:0 0 auto}
+  /* 历史列表 */
+  .hrow{display:flex;gap:12px;margin:0 16px 10px;padding:10px;border-radius:14px;background:var(--glass);border:1px solid var(--stroke);align-items:center}
+  .hrow .rimg{width:58px;height:82px}
+  .hrow h3{font-size:14.5px;font-weight:600;margin-bottom:5px}
+  .hrow .mm{font-size:11px;color:var(--t3);margin-bottom:7px}
+  .pr{height:3px;border-radius:2px;background:rgba(255,255,255,.16);overflow:hidden;width:150px}
+  .pr i{display:block;height:100%;background:var(--accent)}
+  /* 引导页 */
+  .onb{padding:0 20px}
+  .onb h2{font-size:26px;font-weight:700;letter-spacing:-.5px;margin-bottom:8px}
+  .onb p.lead{font-size:13px;color:var(--t2);line-height:1.6;margin-bottom:20px}
+  .field{border-radius:14px;background:rgba(255,255,255,.07);border:1px solid var(--stroke);padding:13px 14px;font-size:13px;color:var(--t2);margin-bottom:12px;line-height:1.5}
+  .field .k{color:var(--t3);font-size:11px;margin-bottom:5px}
+  .btn{height:48px;border-radius:999px;background:var(--accent);color:#0a0d08;font-weight:680;font-size:15.5px;display:grid;place-items:center;margin-bottom:10px}
+  .btn.ghost{background:rgba(255,255,255,.08);color:var(--t1);border:1px solid var(--stroke);font-weight:550;font-size:14px}
+  .warn{margin-top:16px;border-radius:14px;padding:13px 14px;background:rgba(240,169,78,.10);border:1px solid rgba(240,169,78,.28);font-size:11.5px;color:rgba(255,225,190,.9);line-height:1.62}
+  .steps{margin-top:18px}
+  .step{display:flex;gap:11px;align-items:center;padding:9px 0;font-size:13px;color:var(--t3)}
+  .step .n{width:22px;height:22px;border-radius:50%;display:grid;place-items:center;font-size:11px;font-weight:650;
+    background:rgba(255,255,255,.09);color:var(--t3);flex:0 0 auto}
+  .step.done .n{background:var(--accent-dim);color:var(--accent);border:1px solid rgba(140,218,96,.35)}
+  .step.done{color:var(--t2)}
+  .step.now{color:var(--t1);font-weight:600}
+  .step.now .n{background:var(--accent);color:#0a0d08}
+  .ring{width:16px;height:16px;border-radius:50%;border:2px solid rgba(255,255,255,.16);border-top-color:var(--accent)}
+  .tabbar{position:absolute;left:14px;right:14px;bottom:14px;height:64px;border-radius:26px;background:rgba(22,24,28,.78);
+    border:1px solid var(--stroke);backdrop-filter:blur(28px) saturate(180%);display:flex;align-items:center;justify-content:space-around;z-index:40;box-shadow:0 12px 34px rgba(0,0,0,.5)}
+  .tab{display:flex;flex-direction:column;align-items:center;gap:4px;font-size:10.5px;color:var(--t3)}
+  .tab.on{color:var(--accent)}.tab svg{width:23px;height:23px}
+  svg{display:block}
+</style>
+</head>
+<body>
+  <h1>catnode · iPhone 版式设计稿（2/2）</h1>
+  <div class="sub">聚合搜索 · 片库 · 首次导入源 — 与图 1 同一套 token 与组件</div>
+  <div class="row">
+
+  <!-- ============ 6 搜索 ============ -->
+  <div class="wrap">
+    <div class="label">⑥ 搜索 <b>多源聚合 · 去重 · 来源角标</b></div>
+    <div class="phone">
+      <div class="notch"></div>
+      <div class="status"><span>9:41</span><span class="r"><span class="sig"></span><span class="bar"></span></span></div>
+      <div class="scroll">
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:6px 16px 10px">
+          <div style="font-size:20px;font-weight:680">搜索</div>
+          <div class="pill glass" style="padding:5px 11px;font-size:11.5px"><span class="dot"></span>聚合已开</div>
+        </div>
+        <div class="searchfield">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="rgba(242,244,247,.55)" stroke-width="2.1"><circle cx="11" cy="11" r="7"/><path d="M16.5 16.5 21 21"/></svg>
+          长夜<span class="caret"></span>
+          <svg style="margin-left:auto" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="rgba(242,244,247,.4)" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M9 9l6 6M15 9l-6 6"/></svg>
+        </div>
+        <div class="seg2">
+          <div class="pill glass on">全部 12</div>
+          <div class="pill glass">神族九帝 7</div>
+          <div class="pill glass">repl 4</div>
+          <div class="pill glass">AList 1</div>
+        </div>
+        <div class="sec" style="padding-top:6px"><h2>结果</h2><span>已合并重复 3 条</span></div>
+        <div class="res">
+          <div class="rimg"></div>
+          <div style="flex:1;min-width:0">
+            <h3>长夜将明</h3>
+            <div class="mm">2026 · 剧情 · 全 24 集</div>
+            <div class="srcs"><span class="sb a">神族九帝</span><span class="sb">repl</span><span class="sb">AList</span></div>
+          </div>
+          <div class="playmini"><svg width="14" height="14" viewBox="0 0 24 24" fill="#0a0d08"><path d="M8 5v14l11-7z"/></svg></div>
+        </div>
+        <div class="res">
+          <div class="rimg" style="background:linear-gradient(150deg,#7c3a2a,#2a1410 62%,#c2683f)"></div>
+          <div style="flex:1;min-width:0">
+            <h3>长夜行者</h3>
+            <div class="mm">2024 · 悬疑 · 全 12 集</div>
+            <div class="srcs"><span class="sb">repl</span></div>
+          </div>
+          <div class="playmini" style="background:rgba(255,255,255,.12)"><svg width="14" height="14" viewBox="0 0 24 24" fill="#F2F4F7"><path d="M8 5v14l11-7z"/></svg></div>
+        </div>
+        <div class="sec"><h2>搜索历史</h2><span>清空</span></div>
+        <div class="chips">
+          <div class="pill glass">星际</div><div class="pill glass">城中之城</div>
+          <div class="pill glass">纪录片</div><div class="pill glass">2026 新剧</div>
+        </div>
+      </div>
+      <div class="tabbar">
+        <div class="tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M4 10.5 12 4l8 6.5V20a1 1 0 0 1-1 1h-4v-6H9v6H5a1 1 0 0 1-1-1z"/></svg>首页</div>
+        <div class="tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><rect x="3.5" y="3.5" width="7" height="7" rx="2"/><rect x="13.5" y="3.5" width="7" height="7" rx="2"/><rect x="3.5" y="13.5" width="7" height="7" rx="2"/><rect x="13.5" y="13.5" width="7" height="7" rx="2"/></svg>分类</div>
+        <div class="tab on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><circle cx="11" cy="11" r="7"/><path d="M16.5 16.5 21 21"/></svg>搜索</div>
+        <div class="tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M6.5 3.5h11v17l-5.5-3.6L6.5 20.5z"/></svg>片库</div>
+        <div class="tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><circle cx="12" cy="12" r="3.2"/><path d="M12 3.5v2M12 18.5v2M3.5 12h2M18.5 12h2M6 6l1.4 1.4M16.6 16.6 18 18M18 6l-1.4 1.4M7.4 16.6 6 18"/></svg>设置</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 7 片库 ============ -->
+  <div class="wrap">
+    <div class="label">⑦ 片库 <b>收藏 / 历史 / 网盘</b></div>
+    <div class="phone">
+      <div class="notch"></div>
+      <div class="status"><span>9:41</span><span class="r"><span class="sig"></span><span class="bar"></span></span></div>
+      <div class="scroll">
+        <div class="lt">片库</div>
+        <div class="seg2" style="padding-top:0">
+          <div class="pill glass">收藏 28</div>
+          <div class="pill glass on">历史</div>
+          <div class="pill glass">网盘</div>
+        </div>
+        <div class="hrow">
+          <div class="rimg"></div>
+          <div style="flex:1;min-width:0">
+            <h3>长夜将明</h3>
+            <div class="mm">第 3 集 · 今天 21:04</div>
+            <div class="pr"><i style="width:42%"></i></div>
+          </div>
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="rgba(242,244,247,.3)" stroke-width="2.2"><path d="M9.5 5 16 12l-6.5 7"/></svg>
+        </div>
+        <div class="hrow">
+          <div class="rimg" style="background:linear-gradient(150deg,#2f5d4a,#0f2019 60%,#4e9c78)"></div>
+          <div style="flex:1;min-width:0">
+            <h3>山与海之间</h3>
+            <div class="mm">第 11 集 · 昨天 23:31</div>
+            <div class="pr"><i style="width:78%"></i></div>
+          </div>
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="rgba(242,244,247,.3)" stroke-width="2.2"><path d="M9.5 5 16 12l-6.5 7"/></svg>
+        </div>
+        <div class="hrow">
+          <div class="rimg" style="background:linear-gradient(150deg,#4b2a6b,#1a0f28 60%,#8a5cc0)"></div>
+          <div style="flex:1;min-width:0">
+            <h3>雾中列车</h3>
+            <div class="mm">已看完 · 10 月 7 日</div>
+            <div class="pr"><i style="width:100%"></i></div>
+          </div>
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="rgba(242,244,247,.3)" stroke-width="2.2"><path d="M9.5 5 16 12l-6.5 7"/></svg>
+        </div>
+        <div class="sec"><h2>收藏</h2><span>网格 · 长按管理</span></div>
+        <div class="chips" style="gap:11px;flex-wrap:nowrap">
+          <div style="width:104px"><div class="rimg" style="width:104px;height:156px"></div><div style="font-size:12.5px;color:var(--t2);margin-top:6px">长夜将明</div></div>
+          <div style="width:104px"><div class="rimg" style="width:104px;height:156px;background:linear-gradient(150deg,#2a5c6b,#0d1f24 60%,#4fa3b8)"></div><div style="font-size:12.5px;color:var(--t2);margin-top:6px">孤舟</div></div>
+          <div style="width:104px"><div class="rimg" style="width:104px;height:156px;background:linear-gradient(150deg,#6b2a4a,#220d18 60%,#c0507f)"></div><div style="font-size:12.5px;color:var(--t2);margin-top:6px">回声</div></div>
+        </div>
+      </div>
+      <div class="tabbar">
+        <div class="tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M4 10.5 12 4l8 6.5V20a1 1 0 0 1-1 1h-4v-6H9v6H5a1 1 0 0 1-1-1z"/></svg>首页</div>
+        <div class="tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><rect x="3.5" y="3.5" width="7" height="7" rx="2"/><rect x="13.5" y="3.5" width="7" height="7" rx="2"/><rect x="3.5" y="13.5" width="7" height="7" rx="2"/><rect x="13.5" y="13.5" width="7" height="7" rx="2"/></svg>分类</div>
+        <div class="tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><circle cx="11" cy="11" r="7"/><path d="M16.5 16.5 21 21"/></svg>搜索</div>
+        <div class="tab on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M6.5 3.5h11v17l-5.5-3.6L6.5 20.5z"/></svg>片库</div>
+        <div class="tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><circle cx="12" cy="12" r="3.2"/><path d="M12 3.5v2M12 18.5v2M3.5 12h2M18.5 12h2M6 6l1.4 1.4M16.6 16.6 18 18M18 6l-1.4 1.4M7.4 16.6 6 18"/></svg>设置</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 8 首次导入 ============ -->
+  <div class="wrap">
+    <div class="label">⑧ 首次导入源 <b>信任提示 · 三步进度</b></div>
+    <div class="phone">
+      <div class="notch"></div>
+      <div class="status"><span>9:41</span><span class="r"><span class="sig"></span><span class="bar"></span></span></div>
+      <div class="scroll">
+        <div style="display:flex;justify-content:flex-end;padding:6px 20px 0">
+          <div class="pill glass" style="padding:6px 12px;font-size:12px">关闭</div>
+        </div>
+        <div class="onb" style="padding-top:22px">
+          <h2>导入源</h2>
+          <p class="lead">粘贴 <b style="color:var(--t1)">index.js.md5</b> 订阅地址，或从剪贴板一键导入。<br>下载完成后会校验 MD5，再在本地运行时中启动。</p>
+
+          <div class="field">
+            <div class="k">订阅地址</div>
+            <div style="font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;color:var(--t1);word-break:break-all">
+              https://raw.githubusercontent.com/Darklessing/catvod/refs/heads/main/lmentor/index.js.md5
+            </div>
+          </div>
+          <div class="btn">开始导入</div>
+          <div class="btn ghost">从剪贴板粘贴</div>
+
+          <div class="warn">
+            <b style="color:#F0A94E">⚠︎ 该源是第三方程序</b><br>
+            它将在本机以 Node 运行时执行，可以读写本机存储、发起任意网络请求，并可能保存你的网盘账号凭据。
+            请只导入你信任的源；不要使用主力账号。随时可在「设置 › 源管理」中暂停或删除。
+          </div>
+
+          <div class="steps">
+            <div class="step done"><span class="n">✓</span>下载 index.js（9.2 MB）与配置文件</div>
+            <div class="step done"><span class="n">✓</span>校验 MD5 · f320a9ca… ✓ 一致</div>
+            <div class="step now"><span class="n"><span class="ring"></span></span>启动运行时并读取站点目录…</div>
+            <div class="step"><span class="n">4</span>完成</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  </div>
+</body>
+</html>

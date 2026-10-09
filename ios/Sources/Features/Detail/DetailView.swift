@@ -6,12 +6,14 @@
 import SwiftUI
 
 /// 一次播放请求（把"播哪一集、整条列表、哪个站点"打包传给播放页）
-struct PlayRequest: Hashable {
+struct PlayRequest: Identifiable, Hashable {
     let item: VodItem
     let episodes: [Episode]
     let index: Int
     let flag: String
     let site: SiteInfo
+
+    var id: String { item.id + "#" + String(index) + "#" + flag + "#" + site.key }
 }
 
 struct DetailView: View {
@@ -26,6 +28,12 @@ struct DetailView: View {
     @State private var sourceIndex = 0
     @State private var loading = true
     @State private var errorText: String?
+
+    /// 播放用**全屏弹出**而不是导航推入：
+    /// 之前用 NavigationLink 时，连点选集会在导航栈里堆出多个播放页，
+    /// 结果"退一次只退一集"、还会误以为跳到了最后一集（真机踩过）。
+    @State private var playing: PlayRequest?
+    @State private var isPresenting = false
 
     /// 站点信息可能没传进来（例如从收藏/历史进入）→ 用条目自带的 key 兜底
     private var effectiveSite: SiteInfo {
@@ -81,7 +89,7 @@ struct DetailView: View {
         .listStyle(.insetGrouped)
         .navigationTitle(item.name)
         .navigationBarTitleDisplayMode(.inline)
-        .navigationDestination(for: PlayRequest.self) { request in
+        .fullScreenCover(item: $playing) { request in
             PlayerView(request: request, client: client)
         }
         .navigationDestination(for: FolderTarget.self) { target in
@@ -142,8 +150,9 @@ struct DetailView: View {
 
             if let record = library.history(for: item), record.positionSec > 5,
                record.episodeIndex >= 0, record.episodeIndex < episodes.count {
-                NavigationLink(value: playRequest(index: record.episodeIndex,
-                                                  episode: episodes[record.episodeIndex])) {
+                Button {
+                    present(index: record.episodeIndex)
+                } label: {
                     Label("继续观看 \(record.episodeName)", systemImage: "play.circle")
                         .font(.caption)
                 }
@@ -179,7 +188,9 @@ struct DetailView: View {
         Section("选集（\(episodes.count)）") {
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 84), spacing: 8)], spacing: 8) {
                 ForEach(Array(episodes.enumerated()), id: \.element.id) { index, episode in
-                    NavigationLink(value: playRequest(index: index, episode: episode)) {
+                    Button {
+                        present(index: index)
+                    } label: {
                         episodeLabel(index: index, episode: episode)
                     }
                     .buttonStyle(.plain)
@@ -204,6 +215,17 @@ struct DetailView: View {
 
     private func playRequest(index: Int, episode: Episode) -> PlayRequest {
         PlayRequest(item: item, episodes: episodes, index: index, flag: flag, site: effectiveSite)
+    }
+
+    /// 全屏弹出播放页（带 0.7 秒防连点，避免连开多个播放页）
+    private func present(index: Int) {
+        guard index >= 0, index < episodes.count, !isPresenting else { return }
+        isPresenting = true
+        playing = playRequest(index: index, episode: episodes[index])
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 700_000_000)
+            isPresenting = false
+        }
     }
 
     // MARK: - 取数

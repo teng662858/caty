@@ -25,6 +25,7 @@ struct HomeView: View {
     @State private var pageCount = 1
     @State private var loading = false
     @State private var errorText: String?
+    @State private var showFilters = false
 
     /// 系统站点（配置中心/我的网盘/豆瓣首页这类）不作为默认站点，但保留在菜单里
     private let systemKeys: Set<String> = ["douban", "gengxin", "baseset", "mypan"]
@@ -44,7 +45,7 @@ struct HomeView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: Theme.spacingM) {
                     if !categories.isEmpty { categoryChips }
-                    if !currentFilters.isEmpty { filterRows }
+                    if !selected.isEmpty { activeFilterRow }
                     content
                 }
                 .padding(.top, Theme.spacingS)
@@ -59,11 +60,95 @@ struct HomeView: View {
                            initialTid: target.tid, title: target.title)
             }
             .toolbar { toolbar }
+            .sheet(isPresented: $showFilters) { filterSheet }
             .task { await bootstrapIfNeeded() }
             .onChange(of: coordinator.sites.count) { _, _ in
                 Task { await bootstrapIfNeeded(force: true) }
             }
         }
+    }
+
+    // MARK: - 筛选（点分类后按需弹出，内容更全）
+
+    private var filterSheet: some View {
+        NavigationStack {
+            List {
+                ForEach(currentFilters) { group in
+                    Section(group.name) {
+                        ForEach(group.options, id: \.self) { option in
+                            Button {
+                                if selected[group.id] == option.value {
+                                    selected[group.id] = nil
+                                } else {
+                                    selected[group.id] = option.value
+                                }
+                            } label: {
+                                HStack {
+                                    Text(option.name)
+                                    Spacer()
+                                    if selected[group.id] == option.value {
+                                        Image(systemName: "checkmark").foregroundStyle(Theme.accent)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            .navigationTitle("筛选")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("清空") {
+                        selected = [:]
+                        Task { await reload() }
+                    }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("完成") {
+                        showFilters = false
+                        Task { await reload() }
+                    }
+                }
+            }
+        }
+    }
+
+    /// 已选中的筛选（点一下就能去掉）
+    private var activeFilterRow: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: Theme.spacingS) {
+                ForEach(selected.keys.sorted(), id: \.self) { key in
+                    if let value = selected[key] {
+                        Button {
+                            selected[key] = nil
+                            Task { await reload() }
+                        } label: {
+                            HStack(spacing: 4) {
+                                Text(filterDisplayName(key: key, value: value))
+                                Image(systemName: "xmark.circle.fill").font(.caption2)
+                            }
+                            .font(.caption2)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 5)
+                            .background(Theme.accentSoft)
+                            .foregroundStyle(Theme.accent)
+                            .clipShape(Capsule())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+            .padding(.horizontal, Theme.padding)
+        }
+    }
+
+    private func filterDisplayName(key: String, value: String) -> String {
+        guard let group = currentFilters.first(where: { $0.id == key }),
+              let option = group.options.first(where: { $0.value == value }) else {
+            return value
+        }
+        return option.name
     }
 
     // MARK: - 源（左上角菜单）
@@ -94,6 +179,16 @@ struct HomeView: View {
         }
         ToolbarItem(placement: .topBarTrailing) {
             Button {
+                showFilters = true
+            } label: {
+                Image(systemName: selected.isEmpty
+                      ? "line.3.horizontal.decrease.circle"
+                      : "line.3.horizontal.decrease.circle.fill")
+            }
+            .disabled(currentFilters.isEmpty)
+        }
+        ToolbarItem(placement: .topBarTrailing) {
+            Button {
                 Task { await loadSite() }
             } label: {
                 Image(systemName: "arrow.clockwise")
@@ -120,38 +215,6 @@ struct HomeView: View {
                 }
             }
             .padding(.horizontal, Theme.padding)
-        }
-    }
-
-    // MARK: - 第二排起：筛选项（只显示当前分类的）
-
-    private var filterRows: some View {
-        VStack(alignment: .leading, spacing: Theme.spacingS) {
-            ForEach(currentFilters) { group in
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: Theme.spacingS) {
-                        Text(group.name)
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                        ForEach(group.options, id: \.self) { option in
-                            Button {
-                                if selected[group.id] == option.value {
-                                    selected[group.id] = nil
-                                } else {
-                                    selected[group.id] = option.value
-                                }
-                                Task { await reload() }
-                            } label: {
-                                ChipLabel(text: option.name,
-                                          selected: selected[group.id] == option.value,
-                                          compact: true)
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                    .padding(.horizontal, Theme.padding)
-                }
-            }
         }
     }
 

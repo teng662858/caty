@@ -37,21 +37,36 @@ struct PlayerView: View {
         _rate = State(initialValue: LibraryStore.shared.settings.rate)
     }
 
+    @Environment(\.dismiss) private var dismiss
+
     var body: some View {
-        VStack(spacing: 0) {
-            videoArea
-            ScrollView {
-                VStack(alignment: .leading, spacing: Theme.spacingL) {
-                    infoBlock
-                    progressRow
-                    controlBar
-                    episodeStrip
+        NavigationStack {
+            VStack(spacing: 0) {
+                videoArea
+                ScrollView {
+                    VStack(alignment: .leading, spacing: Theme.spacingL) {
+                        infoBlock
+                        progressRow
+                        controlBar
+                        episodeStrip
+                    }
+                    .padding(Theme.padding)
                 }
-                .padding(Theme.padding)
+            }
+            .navigationTitle(episode?.name ?? item.name)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button {
+                        saveProgress(force: true)
+                        engine.stop()
+                        dismiss()
+                    } label: {
+                        Label("返回", systemImage: "chevron.down")
+                    }
+                }
             }
         }
-        .navigationTitle(episode?.name ?? item.name)
-        .navigationBarTitleDisplayMode(.inline)
         .task { await resolve() }
         .onDisappear {
             saveProgress(force: true)

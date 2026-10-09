@@ -409,7 +409,7 @@ struct PlayerView: View {
                 Text(danmakuEnabled ? "弹幕" : "弹")
                     .font(.subheadline)
                     .fontWeight(danmakuEnabled ? .semibold : .regular)
-                    .frame(minWidth: 44, height: 44)
+                    .frame(minWidth: 44, minHeight: 44)
             }
 
             Button { showFullscreen = true } label: {

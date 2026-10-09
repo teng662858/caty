@@ -99,17 +99,7 @@ struct PlayerView: View {
                                  isLive: controller.isLive,
                                  onSelectEpisode: { switchTo($0) },
                                  onRate: { setRate($0) },
-                                 onClose: { showFullscreen = false },
-                                 onPrev: { switchTo(index - 1) },
-                                 canGoPrev: index > 0,
-                                 onNext: { switchTo(index + 1) },
-                                 canGoNext: index < episodes.count - 1,
-                                 danmakuEnabled: danmakuEnabled,
-                                 onToggleDanmaku: {
-                                     danmakuEnabled.toggle()
-                                     library.settings.danmakuEnabled = danmakuEnabled
-                                     if danmakuEnabled, danmaku.isEmpty { Task { await loadDanmaku() } }
-                                 })
+                                 onClose: { showFullscreen = false })
         }
         .task { await resolve() }
         .onAppear {

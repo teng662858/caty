@@ -310,3 +310,35 @@ Info.plist/权限清单、**无 JIT 的关键优化（编译缓存）**、命令
 | `ios/`（P2+P3 源码） | ⏳ 待真机编译：Windows 上无法编译 Swift，**上 Mac 第一件事就是 `Cmd+B`** |
 | `design/*.png` | ✅ 已渲染并核对（8 个屏） |
 | 真源 `--run` 端到端 | ⏳ 等你打开这个开关（会执行第三方代码，所以留给你） |
+
+---
+
+## 第 7 轮 · P5 界面与片库（2026-10-09 深夜）
+
+**触发**：用户说"把 P5 做完再出包，做快点"。
+
+### 交付内容（一次推送，编译通过并出包）
+
+| 模块 | 文件 | 要点 |
+|---|---|---|
+| 本地库 | `Store/LibraryStore.swift` | 收藏 / 历史（含进度）/ 设置；**JSON 落盘**（不引 GRDB，理由见 ADR 10）；写盘节流 5s |
+| 设计 token | `App/Theme.swift` | 主色/圆角/间距/海报比例 + ChipLabel / RemarksBadge |
+| 组件 | `UI/PosterCard.swift`、`UI/StateView.swift` | 海报卡片与行、五态、骨架屏 |
+| 首页 | `Features/Home/HomeView.swift` | 站点胶囊 + 分类胶囊 + 海报墙 + 翻页 + 骨架屏 |
+| 分类 | `Features/Browse/BrowseView.swift` | 分类菜单 + **筛选项**（`filters` → `extend`）+ **目录条目递归** |
+| 详情 | `Features/Detail/DetailView.swift` | 头部 + 收藏 + 继续观看 + 线路 + 选集（标记在看）+ 目录入口 |
+| 播放 | `Features/Playback/PlayerView.swift` | 进度条 + 断点续播 + 倍速 + 上下集 + 播完自动下一集 |
+| 片库 | `Features/Library/LibraryView.swift` | 收藏网格 + 历史列表（进度/相对时间） |
+| 设置 | `Features/Settings/SettingsView.swift` | 播放/界面/源/存储/关于，源管理与诊断收进来 |
+| 导航 | `App/RootView.swift`、`App/CatyApp.swift` | 4 tab（首页/片库/搜索/设置）；URLCache 500MB/50MB |
+
+### 本轮踩的坑（写进代码注释，避免复发）
+
+1. **SwiftUI 表达式过深 → 类型检查超时**：搜索页连挂两次，最终解法是"拆小块 + 把分组数据预先算成数组 + 用
+   `Section(header: Text(...))` 而不是 `Section(计算属性)`"。
+2. `ForEach` 要求元素 `Identifiable`（自定义 Hit 结构体要显式加）。
+3. 闭包式 API 改签名后要全局搜残留调用（`publish { }` 漏了两处）。
+
+### 已知缺口（留给 P6）
+
+动效与手势、浅色模式、后台音频、libmpv（mkv/字幕/软解）、直播 EPG、弹幕渲染、iPad。

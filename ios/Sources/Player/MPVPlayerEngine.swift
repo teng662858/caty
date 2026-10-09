@@ -308,14 +308,15 @@ final class MPVPlayerEngine: ObservableObject {
                 if id == MPV_EVENT_NONE { continue }
                 if id == MPV_EVENT_SHUTDOWN { return }
                 if id == MPV_EVENT_END_FILE {
-                    let data = event.pointee.data
-                    var reason = Int32(0)
-                    if let data {
+                    var finished = false
+                    if let data = event.pointee.data {
+                        // reason 是 C 枚举，导入 Swift 后不能当 Int32 用 → 直接和常量比
                         let endFile = data.assumingMemoryBound(to: mpv_event_end_file.self).pointee
-                        reason = endFile.reason
+                        let reason = endFile.reason
+                        finished = (reason == MPV_END_FILE_REASON_EOF || reason == MPV_END_FILE_REASON_ERROR)
+                        CatyLog.shared.info("player", "mpv 播放结束（reason=\(reason)，finished=\(finished)）")
                     }
-                    CatyLog.shared.info("player", "mpv 播放结束（reason=\(reason)）")
-                    if reason == MPV_END_FILE_REASON_EOF || reason == MPV_END_FILE_REASON_ERROR {
+                    if finished {
                         DispatchQueue.main.async {
                             self?.isPlaying = false
                             self?.ended.send()

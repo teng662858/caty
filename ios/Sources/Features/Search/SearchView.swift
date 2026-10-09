@@ -24,8 +24,22 @@ struct SearchView: View {
         Dictionary(grouping: hits, by: { $0.site.key })
     }
 
+    /// 命中数从多到少的站点顺序
+    /// ⚠️ 不要写成 `bySite.keys.sorted { (bySite[$0]?.count ?? 0) > ... }`
+    /// —— 那会让 Swift 的类型检查器爆炸（实测报 "unable to type-check this expression in reasonable time"）
     private var siteKeys: [String] {
-        bySite.keys.sorted { (bySite[$0]?.count ?? 0) > (bySite[$1]?.count ?? 0) }
+        var pairs: [(key: String, count: Int)] = []
+        pairs.reserveCapacity(bySite.count)
+        for (key, list) in bySite {
+            pairs.append((key: key, count: list.count))
+        }
+        pairs.sort { $0.count > $1.count }
+        return pairs.map { $0.key }
+    }
+
+    private func sectionTitle(_ key: String) -> String {
+        let count = bySite[key]?.count ?? 0
+        return siteName(key) + "（" + String(count) + "）"
     }
 
     var body: some View {
@@ -65,7 +79,7 @@ struct SearchView: View {
                     }
                 } else {
                     ForEach(siteKeys, id: \.self) { key in
-                        Section("\(siteName(key))（\(bySite[key]?.count ?? 0)）") {
+                        Section(sectionTitle(key)) {
                             ForEach(bySite[key] ?? []) { hit in
                                 NavigationLink(value: hit) {
                                     VStack(alignment: .leading, spacing: 3) {

@@ -17,14 +17,20 @@ struct DanmakuOverlay: View {
     /// 播放进度提供者（外推用）
     let position: () -> Double
     let isPlaying: () -> Bool
-    var fontSize: CGFloat = 15
+    /// 用户在「设置 → 弹幕」里的选择
+    var fontSize: CGFloat = 17
+    var opacity: Double = 1.0
+    var laneSpacing: CGFloat = 1.6
+    var showTop = true
+    var showBottom = true
+    var blockWords: [String] = []
 
     /// 每条弹幕的文本宽度（按需测量并缓存 —— 每帧都测会卡）
     @State private var widths: [String: CGFloat] = [:]
 
     private let duration: Double = 8          // 一条弹幕滑过屏幕用多久
-    private let laneHeight: CGFloat = 22
-    private let speedRate: Double = 1
+
+    private var laneHeight: CGFloat { max(14, fontSize * laneSpacing) }
 
     var body: some View {
         TimelineView(.animation(minimumInterval: 1.0 / 15.0)) { timeline in
@@ -32,16 +38,29 @@ struct DanmakuOverlay: View {
                 guard !comments.isEmpty else { return }
                 let now = position()
                 let laneCount = max(1, Int(size.height / laneHeight))
-                for comment in activeComments(around: now, width: size.width, now: timeline.date) {
+                context.opacity = opacity
+                for comment in activeComments(around: now) where !isBlocked(comment.text) {
+                    var text = Text(comment.text)
+                        .font(.system(size: fontSize, weight: .medium))
+                        .foregroundStyle(colorOf(comment.color))
+
+                    if comment.mode == 4 || comment.mode == 5 {
+                        // 顶部（5）/底部（4）固定弹幕；设置里关掉就直接不画
+                        let wantTop = comment.mode == 5
+                        if wantTop && !showTop { continue }
+                        if !wantTop && !showBottom { continue }
+                        let y = wantTop ? laneHeight * 0.8 : size.height - laneHeight * 0.8
+                        context.draw(text, at: CGPoint(x: size.width / 2, y: y), anchor: .center)
+                        continue
+                    }
+
                     let width = widthOf(comment.text)
                     let elapsed = now - comment.time
                     let progress = min(1.0, max(0, elapsed / duration))
                     let x = size.width - CGFloat(progress) * (size.width + width) + width / 2
                     let lane = laneFor(comment, laneCount: laneCount)
                     let y = laneHeight * (CGFloat(lane) + 0.5) + 4
-                    var text = Text(comment.text)
-                        .font(.system(size: fontSize, weight: .medium))
-                    context.draw(text.foregroundStyle(colorOf(comment.color)), at: CGPoint(x: x, y: y), anchor: .center)
+                    context.draw(text, at: CGPoint(x: x, y: y), anchor: .center)
                 }
             }
         }
@@ -49,10 +68,17 @@ struct DanmakuOverlay: View {
     }
 
     /// 只挑"当前这段窗口里应该出现"的弹幕（给 Canvas 少画点）
-    private func activeComments(around now: Double, width: CGFloat, now date: Date) -> [DanmakuComment] {
+    private func activeComments(around now: Double) -> [DanmakuComment] {
         let lower = now - duration - 0.5
         let upper = now + 1.5
-        return comments.filter { $0.time >= lower && $0.time <= upper && $0.mode != 4 && $0.mode != 5 }
+        return comments.filter { $0.time >= lower && $0.time <= upper }
+    }
+
+    /// 屏蔽词（设置里能加，逗号分隔）
+    private func isBlocked(_ text: String) -> Bool {
+        guard !blockWords.isEmpty else { return false }
+        for word in blockWords where !word.isEmpty && text.contains(word) { return true }
+        return false
     }
 
     /// 轨道分配：用 id 取模，简单稳定（避免同一条弹幕在两帧之间跳轨道）

@@ -115,8 +115,11 @@ final class MPVPlayerEngine: ObservableObject {
         setOption("vo", "gpu-next")
         setOption("gpu-api", "vulkan")
         setOption("gpu-context", "moltenvk")
-        // 硬件解码；码流不支持时 mpv 自己回退到软解（auto-safe 不会选不安全的解码器）
-        setOption("hwdec", "auto-safe")
+        // 硬件解码：明确用 VideoToolbox（真机日志里 auto-safe 会先试 Vulkan 视频解码，
+        // MoltenVK 不支持那条扩展 → 白试一轮才回退；直接指 videotoolbox 少绕一圈）
+        // 码流不支持时 mpv 默认会回退软解（vd-lavc-software-fallback）
+        setOption("hwdec", "videotoolbox")
+        setOption("vd-lavc-software-fallback", "yes")
         setOption("video-rotate", "no")
         // 目标色域：HDR 内容做色调映射（不打开系统 EDR 直通，避免 HDR 屏闪）
         setOption("target-colorspace-hint", "no")
@@ -253,6 +256,22 @@ final class MPVPlayerEngine: ObservableObject {
         var value = Double()
         guard mpv_get_property(mpv, name, MPV_FORMAT_DOUBLE, &value) >= 0 else { return 0 }
         return value
+    }
+
+    /// 视频原始宽度（拿不到返回 0）
+    var videoWidth: Int {
+        guard let mpv else { return 0 }
+        var value: Int64 = 0
+        guard mpv_get_property(mpv, "width", MPV_FORMAT_INT64, &value) >= 0 else { return 0 }
+        return Int(value)
+    }
+
+    /// 视频原始高度
+    var videoHeight: Int {
+        guard let mpv else { return 0 }
+        var value: Int64 = 0
+        guard mpv_get_property(mpv, "height", MPV_FORMAT_INT64, &value) >= 0 else { return 0 }
+        return Int(value)
     }
 
     private func getFlag(_ name: String) -> Bool {

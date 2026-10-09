@@ -17,6 +17,9 @@ import AVKit
 struct FullscreenPlayerView: View {
 
     @ObservedObject var controller: PlaybackController
+    @ObservedObject private var library = LibraryStore.shared
+    /// 弹幕：和小窗共享同一份（源推来的也会即时出现）
+    @ObservedObject private var danmakuStore = DanmakuStore.shared
     let episodes: [Episode]
     let currentIndex: Int
     let rate: Double
@@ -24,10 +27,20 @@ struct FullscreenPlayerView: View {
     let onSelectEpisode: (Int) -> Void
     let onRate: (Double) -> Void
     let onClose: () -> Void
+    /// 上一集 / 下一集
+    let onPrev: (() -> Void)?
+    let onNext: (() -> Void)?
+    /// 弹幕开关（跟随播放页的设置）
+    @Binding var danmakuEnabled: Bool
+    let danmakuCount: Int
 
     @State private var controlsVisible = true
     @State private var scrubbing = false
     @State private var hideTask: Task<Void, Never>?
+    /// 手势（亮度/音量/快进/长按倍速）——和小窗共用一套逻辑
+    @StateObject private var gestures = PlayerGestureState()
+    /// 竖屏视频（短剧）：不强行横屏，否则画面只占中间一小条
+    @State private var forcedLandscape = false
 
     var body: some View {
         ZStack {
@@ -41,7 +54,32 @@ struct FullscreenPlayerView: View {
                 }
             }
             .ignoresSafeArea()
+            .contentShape(Rectangle())
             .onTapGesture { toggleControls() }
+            .gesture(gestures.dragGesture(controller: controller,
+                                          viewWidth: UIScreen.main.bounds.width))
+            .onLongPressGesture(minimumDuration: 0.5) {
+            } onPressingChanged: { pressing in
+                gestures.pressingChanged(pressing, controller: controller, normalRate: rate)
+            }
+
+            if danmakuEnabled, let comments = danmakuStore.current {
+                DanmakuOverlay(comments: comments,
+                               position: { extrapolatedPosition },
+                               isPlaying: { controller.isPlaying },
+                               fontSize: CGFloat(library.settings.danmakuFontSize),
+                               opacity: library.settings.danmakuOpacity,
+                               laneSpacing: CGFloat(library.settings.danmakuLaneSpacing),
+                               showTop: library.settings.danmakuShowTop,
+                               showBottom: library.settings.danmakuShowBottom,
+                               blockWords: library.settings.danmakuBlockWords
+                                   .split(separator: ",").map(String.init))
+                    .ignoresSafeArea()
+            }
+
+            if let hud = gestures.hud {
+                GestureHUDView(hud: hud)
+            }
 
             if controlsVisible {
                 controls
@@ -51,7 +89,8 @@ struct FullscreenPlayerView: View {
         .statusBarHidden()
         .persistentSystemOverlays(.hidden)
         .onAppear {
-            ScreenOrientation.lockLandscape()
+            gestures.prepare()
+            applyOrientation()
             scheduleHide()
         }
         .onDisappear {
@@ -91,6 +130,33 @@ struct FullscreenPlayerView: View {
                 .lineLimit(1)
 
             Spacer()
+
+            Button {
+                forcedLandscape.toggle()
+                if forcedLandscape { ScreenOrientation.lockLandscape() } else { ScreenOrientation.lockPortrait() }
+                interactive()
+            } label: {
+                Image(systemName: "rotate.right")
+                    .font(.subheadline)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(.ultraThinMaterial, in: Capsule())
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.white)
+
+            Button {
+                danmakuEnabled.toggle()
+                interactive()
+            } label: {
+                Text(danmakuEnabled ? "弹幕开" : "弹幕")
+                    .font(.subheadline)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(.ultraThinMaterial, in: Capsule())
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.white)
 
             if episodes.count > 1 {
                 Menu {
@@ -142,6 +208,11 @@ struct FullscreenPlayerView: View {
             }
 
             HStack(spacing: Theme.spacingL) {
+                if let onPrev {
+                    Button { onPrev(); interactive() } label: {
+                        Image(systemName: "backward.end.fill").font(.title3).frame(width: 44, height: 44)
+                    }
+                }
                 Button { step(-15) } label: {
                     Image(systemName: "gobackward.15").font(.title2).frame(width: 44, height: 44)
                 }
@@ -152,6 +223,11 @@ struct FullscreenPlayerView: View {
                 }
                 Button { step(15) } label: {
                     Image(systemName: "goforward.15").font(.title2).frame(width: 44, height: 44)
+                }
+                if let onNext {
+                    Button { onNext(); interactive() } label: {
+                        Image(systemName: "forward.end.fill").font(.title3).frame(width: 44, height: 44)
+                    }
                 }
 
                 Spacer()
@@ -185,6 +261,25 @@ struct FullscreenPlayerView: View {
     private func close() {
         onClose()
     }
+
+    /// 横屏还是竖屏：看视频自己的宽高比（竖屏短剧硬转横屏会变成中间一小条）
+    private func applyOrientation() {
+        if forcedLandscape {
+            ScreenOrientation.lockLandscape()
+            return
+        }
+        if controller.isPortraitVideo {
+            ScreenOrientation.lockPortrait()
+        } else {
+            ScreenOrientation.lockLandscape()
+        }
+    }
+
+    private var extrapolatedPosition: Double {
+        guard controller.isPlaying else { return controller.position }
+        return controller.position + Date().timeIntervalSince(controller.positionUpdatedAt) * rate
+    }
+
 
     private func step(_ seconds: Double) {
         let total = controller.duration

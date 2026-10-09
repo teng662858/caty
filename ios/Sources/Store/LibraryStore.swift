@@ -76,6 +76,16 @@ struct AppSettings: Codable {
     var playerKernel: String = PlayerKernelPreference.auto.rawValue
     /// 弹幕开关（源支持弹幕时才有效）
     var danmakuEnabled: Bool = false
+    /// 弹幕服务来源：local = 源自带的服务；remote = 用户填的远程地址
+    var danmakuSource: String = "local"
+    var danmakuRemoteURL: String = ""
+    var danmakuFontSize: Double = 17
+    var danmakuLaneSpacing: Double = 1.6
+    var danmakuOpacity: Double = 1.0
+    var danmakuShowTop: Bool = true
+    var danmakuShowBottom: Bool = true
+    /// 屏蔽词（逗号/空格分隔）
+    var danmakuBlockWords: String = ""
 
     init() {}
 
@@ -91,6 +101,14 @@ struct AppSettings: Codable {
         playerKernel = try container.decodeIfPresent(String.self, forKey: .playerKernel)
             ?? PlayerKernelPreference.auto.rawValue
         danmakuEnabled = try container.decodeIfPresent(Bool.self, forKey: .danmakuEnabled) ?? false
+        danmakuSource = try container.decodeIfPresent(String.self, forKey: .danmakuSource) ?? "local"
+        danmakuRemoteURL = try container.decodeIfPresent(String.self, forKey: .danmakuRemoteURL) ?? ""
+        danmakuFontSize = try container.decodeIfPresent(Double.self, forKey: .danmakuFontSize) ?? 17
+        danmakuLaneSpacing = try container.decodeIfPresent(Double.self, forKey: .danmakuLaneSpacing) ?? 1.6
+        danmakuOpacity = try container.decodeIfPresent(Double.self, forKey: .danmakuOpacity) ?? 1.0
+        danmakuShowTop = try container.decodeIfPresent(Bool.self, forKey: .danmakuShowTop) ?? true
+        danmakuShowBottom = try container.decodeIfPresent(Bool.self, forKey: .danmakuShowBottom) ?? true
+        danmakuBlockWords = try container.decodeIfPresent(String.self, forKey: .danmakuBlockWords) ?? ""
     }
 }
 

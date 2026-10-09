@@ -59,6 +59,11 @@ struct SettingsView: View {
             Text(PlayerKernelPreference.from(library.settings.playerKernel).detail)
                 .font(.footnote)
                 .foregroundStyle(.secondary)
+            NavigationLink {
+                DanmakuSettingsView()
+            } label: {
+                Label("弹幕（开关 / 样式 / 屏蔽词）", systemImage: "text.bubble")
+            }
         }
     }
 
@@ -86,6 +91,13 @@ struct SettingsView: View {
                 SourceManageView(coordinator: coordinator, embedded: true)
             } label: {
                 Label("源管理（导入 / 删除 / 重试）", systemImage: "square.stack.3d.up")
+            }
+
+            // 容器型源的「直」/「盘」站点要靠外部 JS 脚本（猫爪那类 App 自带/可订阅）
+            NavigationLink {
+                ScriptManageView(coordinator: coordinator)
+            } label: {
+                Label("站点脚本（打不开的「直」/「盘」站点靠它）", systemImage: "curlybraces")
             }
 
             Button {

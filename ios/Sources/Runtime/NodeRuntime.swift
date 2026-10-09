@@ -236,6 +236,14 @@ final class NodeRuntime: ObservableObject {
         setenv("DEV_HTTP_PORT", "0", 1)
         setenv("HOME", sources[0].dataRoot.path, 1)
 
+        // 容器型源（catpaw/douer/smdl/XPTV 这一家）里的「直」/「盘」站点要靠外部 JS 脚本，
+        // 这一支用 CATPAW_CUSTOM_SPIDER_DIR 指定脚本目录（另一支看 $NODE_PATH/js 或
+        // ~/Library/Application Support/CatPaw/js，ScriptStore 会往这几处都写一份）。
+        if let spiders = try? ScriptStore.shared.sharedDir() {
+            setenv("CATPAW_CUSTOM_SPIDER_DIR", spiders.path, 1)
+            CatyLog.shared.info("runtime", "脚本目录（站点脚本）：(spiders.path)")
+        }
+
         // ---- /msg 桥
         let token = NodeRuntime.randomToken()
         self.token = token
@@ -372,10 +380,21 @@ final class NodeRuntime: ObservableObject {
             CatyLog.shared.info("bridge", "源提示：\(text)（参数键=\(message.opt.keys.sorted().joined(separator: ","))）")
 
         case "danmuPush":
-            // 源把"这一集的弹幕地址"推过来（它自己构造的 /danmu/auto?...）
+            // 源把"这一集的弹幕地址"推过来（它自己构造的 /danmu/auto?name=…&episode=…）。
+            // 真机日志里见过：源给的剧名是"半步多沧澜传"，我们按列表名拼的是"半步多·沧澜传" → 源那边 500。
+            // 所以**优先用源推来的地址**去取（它自己算的最准），取到就替换当前弹幕。
             if let url = message.opt["url"] as? String, !url.isEmpty {
                 danmakuPushURL = url
-                CatyLog.shared.info("bridge", "源推来弹幕地址：(url)")
+                CatyLog.shared.info("bridge", "源推来弹幕地址：\(url)")
+                if LibraryStore.shared.settings.danmakuEnabled {
+                    Task {
+                        let comments = await DanmakuService.comments(fromURL: url)
+                        if !comments.isEmpty {
+                            DanmakuStore.shared.set(comments, episodeKey: DanmakuStore.shared.episodeKey)
+                            CatyLog.shared.info("bridge", "已采用源推来的弹幕：\(comments.count) 条")
+                        }
+                    }
+                }
             }
 
         case "openInternalWebview":

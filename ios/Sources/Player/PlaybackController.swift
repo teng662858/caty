@@ -55,6 +55,8 @@ final class PlaybackController: ObservableObject {
     @Published private(set) var buffering = false
     /// 最近一次采样到 position 的时刻（弹幕要按"位置 + 过去的时间"外推，才跟得上画面）
     private(set) var positionUpdatedAt = Date()
+    /// 画面的宽高比（宽/高）。竖屏短剧 ≈ 0.56，横屏 ≈ 1.78；拿不到就 nil 走 16:9
+    @Published private(set) var videoAspect: Double?
     @Published private(set) var errorText: String?
     /// 状态提示（例如"系统内核播不了，已自动切 mpv"）
     @Published private(set) var kernelNote: String?
@@ -216,6 +218,7 @@ final class PlaybackController: ObservableObject {
 
     private func sample() {
         positionUpdatedAt = Date()
+        sampleAspect()
         switch active {
         case .system:
             isPlaying = av.isPlaying
@@ -233,6 +236,25 @@ final class PlaybackController: ObservableObject {
             if let error = mpv.lastError { errorText = error }
         }
     }
+
+    private func sampleAspect() {
+        var aspect: Double?
+        switch active {
+        case .system:
+            let size = av.player.currentItem?.presentationSize ?? .zero
+            if size.width > 1, size.height > 1 { aspect = Double(size.width / size.height) }
+        case .mpv:
+            let width = mpv.videoWidth
+            let height = mpv.videoHeight
+            if width > 1, height > 1 { aspect = Double(width) / Double(height) }
+        }
+        if let aspect, abs((videoAspect ?? 0) - aspect) > 0.01 {
+            videoAspect = aspect
+        }
+    }
+
+    /// 竖屏画面（短剧/直播竖屏）——进全屏时不能硬转横屏
+    var isPortraitVideo: Bool { (videoAspect ?? 1.78) < 1.05 }
 
     private func handleEnded() {
         onEnded?()

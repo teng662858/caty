@@ -45,6 +45,33 @@ final class PlaybackContext {
     }
 }
 
+/// 当前正在用的弹幕：小窗取好，全屏/源推送都读同一份（可观察，源推来新弹幕会自动刷新）
+final class DanmakuStore: ObservableObject {
+
+    static let shared = DanmakuStore()
+
+    @Published private(set) var comments: [DanmakuComment] = []
+    /// 源通过桥推来的弹幕地址（它自己算好的剧名/集号，比我们猜的准）
+    var pushedURL: String?
+    /// 这份弹幕属于哪一集（切集时要丢掉旧的）
+    var episodeKey: String?
+
+    private init() {}
+
+    var current: [DanmakuComment]? { comments.isEmpty ? nil : comments }
+
+    func set(_ list: [DanmakuComment], episodeKey: String? = nil) {
+        self.episodeKey = episodeKey ?? self.episodeKey
+        comments = list
+    }
+
+    func clear(episodeKey: String?) {
+        self.episodeKey = episodeKey
+        comments = []
+        pushedURL = nil
+    }
+}
+
 enum DanmakuService {
 
     private static var cache: [String: [DanmakuComment]] = [:]
@@ -60,7 +87,7 @@ enum DanmakuService {
         }
         lock.unlock()
 
-        var components = URLComponents(string: base + "/danmu/auto")
+        var components = URLComponents(string: serviceBase.hasSuffix("/danmu/auto") ? serviceBase : serviceBase + "/danmu/auto")
         var items: [URLQueryItem] = [URLQueryItem(name: "name", value: name)]
         if let episode { items.append(URLQueryItem(name: "episode", value: String(episode))) }
         components?.queryItems = items
@@ -86,6 +113,24 @@ enum DanmakuService {
             CatyLog.shared.warn("danmaku", "取弹幕失败：\(error.localizedDescription)")
             return []
         }
+    }
+
+    /// 用**源推来的完整地址**取弹幕（地址里已经带好 name/episode）
+    static func comments(fromURL rawURL: String) async -> [DanmakuComment] {
+        guard let url = URL(string: rawURL) else { return [] }
+        return await Task.detached(priority: .utility) { () -> [DanmakuComment] in
+            var request = URLRequest(url: url)
+            request.timeoutInterval = 25
+            request.setValue("okhttp/3.15.0", forHTTPHeaderField: "User-Agent")
+            do {
+                let (data, response) = try await URLSession.shared.data(for: request)
+                let code = (response as? HTTPURLResponse)?.statusCode ?? -1
+                guard (200..<300).contains(code) else { return [] }
+                return parse(xml: data)
+            } catch {
+                return []
+            }
+        }.value
     }
 
     /// 解析 B 站风格 XML：<d p="时间,模式,字号,颜色,…">文本</d>

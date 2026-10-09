@@ -12,9 +12,11 @@ import Foundation
 
 final class AggregatorService {
 
-    struct Hit: Hashable {
+    struct Hit: Identifiable, Hashable {
         let site: SiteInfo
         let item: VodItem
+
+        var id: String { site.key + "|" + item.id }
     }
 
     /// 只搜声明了 searchable 的站点

@@ -122,15 +122,11 @@ struct SearchView: View {
         }
     }
 
-    @ViewBuilder
-    private var toolbarContent: some View {
+    @ToolbarContentBuilder
+    private var toolbarContent: some ToolbarContent {
         ToolbarItem(placement: .topBarTrailing) {
-            if searching {
-                ProgressView()
-            } else {
-                Button("搜索") { Task { await run() } }
-                    .disabled(keyword.trimmingCharacters(in: .whitespaces).isEmpty)
-            }
+            Button("搜索") { Task { await run() } }
+                .disabled(searching || keyword.trimmingCharacters(in: .whitespaces).isEmpty)
         }
     }
 

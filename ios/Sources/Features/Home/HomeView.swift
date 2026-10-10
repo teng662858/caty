@@ -35,6 +35,12 @@ struct HomeView: View {
     @State private var showSourcePicker = false
     /// 站点 → 它的分类/筛选项（问过一次就存下来；切回同一个站点时只发 category 请求）
     @State private var siteMenus: [String: SiteMenus] = [:]
+    /// 取数任务：切站点时把上一个取消掉（"最后点的那次说了算"）
+    @State private var loadTask: Task<Void, Never>?
+    /// 每次"要显示的东西"换一次就 +1；回来晚了的旧请求看到号码不对就把结果丢掉
+    @State private var loadToken = 0
+    /// 载入超过 3 秒才提示"第一次打开这个站点要慢一点"
+    @State private var slowHint = false
 
     /// 系统站点（配置中心/我的网盘/豆瓣首页这类）不作为默认站点，但保留在菜单里
     private var systemKeys: Set<String> { RuntimeCoordinator.systemSiteKeys }
@@ -71,15 +77,12 @@ struct HomeView: View {
             .toolbar { toolbar }
             .sheet(isPresented: $showSourcePicker) {
                 SourcePickerSheet(groups: sourceGroups, currentId: siteId) { site in
-                    guard site.id != siteId else { return }
-                    siteId = site.id
-                    library.settings.defaultSiteKey = site.key
-                    Task { await loadSite() }
+                    switchSite(site)
                 }
             }
-            .task { await bootstrapIfNeeded() }
+            .task { bootstrap() }
             .onChange(of: coordinator.sites.count) { _, _ in
-                Task { await bootstrapIfNeeded(force: true) }
+                handleSitesChanged()
             }
         }
     }
@@ -130,7 +133,7 @@ struct HomeView: View {
             } else {
                 selected[group.id] = option.value
             }
-            Task { await reload() }
+            reloadCategory()
         } label: {
             ChipLabel(text: option.name, selected: isOn, compact: true, large: true)
         }
@@ -157,7 +160,7 @@ struct HomeView: View {
         }
         ToolbarItem(placement: .topBarTrailing) {
             Button {
-                Task { await loadSite() }
+                reloadCategory()
             } label: {
                 Image(systemName: "arrow.clockwise")
             }
@@ -175,7 +178,7 @@ struct HomeView: View {
                         guard category.id != tid else { return }
                         tid = category.id
                         selected = [:]
-                        Task { await reload() }
+                        reloadCategory()
                     } label: {
                         ChipLabel(text: category.name, selected: category.id == tid, large: true)
                     }
@@ -202,11 +205,11 @@ struct HomeView: View {
             // 它们的工作方式是"去搜索页搜片名"——不该显示成"取不到内容"吓用户
             StateView(kind: .empty("这是搜索型站点",
                                    hint: "它没有分类列表，请到「搜索」页输入片名来用它")) {
-                Task { await loadSite() }
+                reloadCategory()
             }
         } else if let errorText, items.isEmpty {
             StateView(kind: .failure("取不到内容", hint: "源返回：\(errorText)")) {
-                Task { await reload() }
+                reloadCategory()
             }
         } else if items.isEmpty {
             StateView(kind: .empty("这个分类没有内容", hint: "换个分类或换个源试试"))
@@ -225,13 +228,26 @@ struct HomeView: View {
         return categories.isEmpty && items.isEmpty && errorText == nil && site.searchable
     }
 
-    /// "正在载入某某站点…"（换源/换分类时的即时反馈）
+    /// "正在载入某某站点…"（换源/换分类时的即时反馈）——第一次打开某个站点要等它解析上游地址，
+    /// 所以挂一个"取消"，用户不用干等（用户原话："切换源直接卡死"）
     private var loadingBanner: some View {
         HStack(spacing: 8) {
             ProgressView().controlSize(.small)
-            Text("正在载入 \(currentSite?.name ?? "站点")…")
+            VStack(alignment: .leading, spacing: 2) {
+                Text("正在载入 \(currentSite?.name ?? "站点")…")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                if slowHint {
+                    Text("这个站点第一次打开要先解析它的上游地址，会慢一点")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            Spacer(minLength: 0)
+            Button("取消") { cancelLoad() }
                 .font(.footnote)
-                .foregroundStyle(.secondary)
+                .buttonStyle(.plain)
+                .foregroundStyle(Theme.accent)
         }
         .padding(.horizontal, Theme.padding)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -261,37 +277,98 @@ struct HomeView: View {
 
     // MARK: - 取数
 
-    @MainActor
-    private func bootstrapIfNeeded(force: Bool = false) async {
-        guard !coordinator.sites.isEmpty else { return }
-        if !force, siteId != nil { return }
-        if siteId == nil {
-            let preferred = library.settings.defaultSiteKey.flatMap { key in
-                coordinator.sites.first { $0.key == key }
-            }
-            let fallback = coordinator.sites.first { !systemKeys.contains($0.key) } ?? coordinator.sites.first
-            siteId = (preferred ?? fallback)?.id
+    /// 首次进入：挑一个默认站点（上次用的优先）
+    private func bootstrap() {
+        guard !coordinator.sites.isEmpty, siteId == nil else { return }
+        let preferred = library.settings.defaultSiteKey.flatMap { key in
+            coordinator.sites.first { $0.key == key }
         }
-        await loadSite()
+        let fallback = coordinator.sites.first { !systemKeys.contains($0.key) } ?? coordinator.sites.first
+        guard let target = preferred ?? fallback else { return }
+        siteId = target.id
+        startSiteLoad(keepItems: false)
+    }
+
+    /// 站点列表变了（新源起来 / 某个源被停掉）：选中的那个还在就什么都不做
+    /// —— 不要打断用户刚发起的切换
+    private func handleSitesChanged() {
+        guard !coordinator.sites.isEmpty else { return }
+        if let siteId, coordinator.sites.contains(where: { $0.id == siteId }) { return }
+        let fallback = coordinator.sites.first { !systemKeys.contains($0.key) } ?? coordinator.sites.first
+        guard let target = fallback else { return }
+        siteId = target.id
+        startSiteLoad(keepItems: false)
+    }
+
+    /// 切站点：**最后点的那次说了算**。
+    ///
+    /// 旧写法是 `guard !loading else { return }`：正在载入时再点别的站点会被**直接丢掉**，
+    /// 于是标题换了、内容还是旧站点的、也没有任何提示 —— 用户看到的就是"卡死"。
+    private func switchSite(_ site: SiteInfo) {
+        guard site.id != siteId else { return }
+        siteId = site.id
+        library.settings.defaultSiteKey = site.key
+        CatyLog.shared.info("site", "切换站点 → \(site.name)")
+        startSiteLoad(keepItems: false)
+    }
+
+    /// 换分类 / 换筛选 / 点刷新：同一个站点，**保留旧内容**避免白屏
+    private func reloadCategory() {
+        guard siteId != nil else { return }
+        startSiteLoad(keepItems: true)
+    }
+
+    private func startSiteLoad(keepItems: Bool) {
+        loadTask?.cancel()
+        loadToken += 1
+        let token = loadToken
+        loading = true
+        errorText = nil
+        slowHint = false
+        if !keepItems {
+            // 换站点：旧列表和旧的筛选项都要清掉（不然会把上个站点的筛选条件发给新站点）
+            items = []
+            selected = [:]
+        }
+        loadTask = Task { await loadSiteBody(token: token, keepItems: keepItems) }
+        scheduleSlowHint(token: token)
+    }
+
+    /// 用户等不下去时可以按"取消"（尤其是没预热到的站点，第一次要等它解析上游地址）
+    private func cancelLoad() {
+        loadTask?.cancel()
+        loadTask = nil
+        loadToken += 1
+        loading = false
+        slowHint = false
+        CatyLog.shared.info("site", "用户取消了这次载入")
     }
 
     @MainActor
-    private func loadSite() async {
-        guard let site = currentSite, let client = coordinator.client, !loading else { return }
-        loading = true
-        defer { loading = false }
-        categories = []
-        categoryFilters = [:]
-        selected = [:]
-        errorText = nil
-        let previousItems = items          // 换源失败时留着旧内容，别白屏
+    private func scheduleSlowHint(token: Int) {
+        Task {
+            try? await Task.sleep(nanoseconds: 3_000_000_000)
+            guard token == loadToken, loading else { return }
+            slowHint = true
+        }
+    }
+
+    @MainActor
+    private func loadSiteBody(token: Int, keepItems: Bool) async {
+        guard let site = currentSite, let client = coordinator.client else {
+            if token == loadToken { loading = false }
+            return
+        }
+        let previousItems = items
         do {
             if let cached = siteMenus[site.id] {
                 // 这个站点问过一次了：分类/筛选项直接用缓存，只发一个 category 请求
+                guard token == loadToken else { return }
                 categories = cached.categories
                 categoryFilters = cached.filters
             } else {
                 let home = try await client.home(site: site)
+                guard token == loadToken else { return }
                 categories = home.categories
                 categoryFilters = home.filters
                 siteMenus[site.id] = SiteMenus(categories: home.categories, filters: home.filters)
@@ -302,6 +379,7 @@ struct HomeView: View {
             pageCount = 1
             if let first = tid {
                 let result = try await client.category(site: site, tid: first, page: 1)
+                guard token == loadToken else { return }
                 items = result.items
                 page = result.page
                 pageCount = result.pageCount
@@ -310,28 +388,14 @@ struct HomeView: View {
             }
             if items.isEmpty { errorText = "这个站点没有返回内容" }
         } catch {
-            items = previousItems
+            guard token == loadToken else { return }
+            if keepItems { items = previousItems }
             errorText = error.localizedDescription
+            CatyLog.shared.warn("site", "\(site.name) 载入失败：\(error.localizedDescription)")
         }
-    }
-
-    @MainActor
-    private func reload() async {
-        guard let site = currentSite, let client = coordinator.client, !loading else { return }
-        loading = true
-        defer { loading = false }
-        let previousItems = items
-        page = 1
-        errorText = nil
-        do {
-            let result = try await client.category(site: site, tid: tid, page: 1, extend: selected)
-            items = result.items
-            page = result.page
-            pageCount = result.pageCount
-            if items.isEmpty { errorText = "这个筛选组合没有内容" }
-        } catch {
-            items = previousItems
-            errorText = error.localizedDescription
+        if token == loadToken {
+            loading = false
+            slowHint = false
         }
     }
 
@@ -339,10 +403,10 @@ struct HomeView: View {
     private func loadMore() async {
         guard let site = currentSite, let client = coordinator.client,
               !loading, page < pageCount, items.count > 1 else { return }
-        loading = true
-        defer { loading = false }
+        let token = loadToken
         do {
             let result = try await client.category(site: site, tid: tid, page: page + 1, extend: selected)
+            guard token == loadToken else { return }
             let existing = Set(items.map(\.id))
             items.append(contentsOf: result.items.filter { !existing.contains($0.id) })
             page = result.page

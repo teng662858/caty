@@ -298,6 +298,9 @@ final class RuntimeCoordinator: ObservableObject {
             return
         }
 
+        // 先给个即时反馈：取包/启动要几秒（缓存命中也要校验 MD5），
+        // 开关上什么都不显示的话看着就像"点了没反应"
+        sourceNotes[id] = "正在取包…"
         var seen = Set<String>()
         guard let spec = await prepare(record, dedupe: &seen) else { return }
         if let address = await runtime.startSource(spec) {

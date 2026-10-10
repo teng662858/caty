@@ -13,10 +13,28 @@
 //
 
 import SwiftUI
+import UIKit
+
+/// 弹一个系统的"选集"菜单（小窗和全屏共用；菜单挂在最上层控制器上）
+func presentEpisodePicker(_ episodes: [Episode], currentIndex: Int, onSelect: @escaping (Int) -> Void) {
+    guard !episodes.isEmpty else { return }
+    let sheet = UIAlertController(title: "选集", message: nil, preferredStyle: .actionSheet)
+    for (i, episode) in episodes.enumerated() {
+        let title = i == currentIndex ? "✓ " + episode.name : episode.name
+        sheet.addAction(UIAlertAction(title: title, style: .default) { _ in onSelect(i) })
+    }
+    sheet.addAction(UIAlertAction(title: "取消", style: .cancel))
+    if let popover = sheet.popoverPresentationController {
+        popover.sourceView = UIApplication.shared.windows.first
+    }
+    UIApplication.shared.catyTopViewController()?.present(sheet, animated: true)
+}
 
 /// 控制层要显示的状态
 struct PlayerChromeState {
     var isFullscreen = false
+    /// 小窗模式：竖屏播放页里画面只有两三百点高，按钮要小一号、少一排（返回/旋转之类的交给页面本身）
+    var compact = false
     var title = ""
     var subtitle = ""
     var position: Double = 0
@@ -80,11 +98,35 @@ struct PlayerControlsOverlay: View {
             Spacer(minLength: 0)
             bottomBar
         }
-        .padding(.horizontal, Theme.padding)
-        .padding(.vertical, 10)
+        .padding(.horizontal, state.compact ? 10 : Theme.padding)
+        .padding(.vertical, state.compact ? 6 : 10)
     }
 
+    @ViewBuilder
     private var topBar: some View {
+        if state.compact {
+            compactTopBar
+        } else {
+            fullTopBar
+        }
+    }
+
+    /// 小窗：返回 + 剧名（一行）+ 弹幕 / 比例 / 锁
+    /// （截图、画中画放在画面下方的信息区，那里有地方放大一点的按钮）
+    private var compactTopBar: some View {
+        HStack(spacing: 4) {
+            iconButton(icon: "chevron.down", size: 32) { actions.close() }
+            titleBlock
+            Spacer(minLength: 4)
+            iconButton(icon: "text.bubble", active: state.danmakuEnabled, size: 32) { actions.toggleDanmaku() }
+            iconButton(icon: "arrow.up.left.and.arrow.down.right", size: 32) { actions.toggleFullscreen() }
+            iconButton(icon: "aspectratio", size: 32) { actions.cycleAspect() }
+            iconButton(icon: "lock.open", size: 32) { actions.setLocked(true) }
+        }
+    }
+
+    /// 全屏：返回 + 剧名 + 一整排图标（多了"旋转"和"进/退全屏"）
+    private var fullTopBar: some View {
         HStack(spacing: 8) {
             iconButton(icon: state.isFullscreen ? "chevron.down" : "chevron.backward") { actions.close() }
             titleBlock
@@ -122,7 +164,7 @@ struct PlayerControlsOverlay: View {
             Spacer(minLength: 20)
             centerButton(icon: "goforward.10") { actions.seekBy(10) }
         }
-        .padding(.horizontal, 30)
+        .padding(.horizontal, state.compact ? 20 : 30)
     }
 
     private var bottomBar: some View {
@@ -182,21 +224,37 @@ struct PlayerControlsOverlay: View {
     }
 
     private var actionRow: some View {
-        HStack(spacing: 10) {
-            iconButton(icon: "backward.end.fill") { actions.previousEpisode() }
-            iconButton(icon: state.isPlaying ? "pause.fill" : "play.fill") { actions.togglePlay() }
-            iconButton(icon: "forward.end.fill") { actions.nextEpisode() }
+        HStack(spacing: state.compact ? 8 : 10) {
+            // 小窗中间已经有大播放键和 ±10 了，这里只留"上一集/下一集"
+            if state.compact {
+                iconButton(icon: "backward.end.fill", size: 30) { actions.previousEpisode() }
+                iconButton(icon: "forward.end.fill", size: 30) { actions.nextEpisode() }
+            } else {
+                iconButton(icon: "backward.end.fill") { actions.previousEpisode() }
+                iconButton(icon: state.isPlaying ? "pause.fill" : "play.fill") { actions.togglePlay() }
+                iconButton(icon: "forward.end.fill") { actions.nextEpisode() }
+            }
 
             Spacer(minLength: 4)
 
-            if state.introSeconds > 0 {
-                pillButton(title: "片头\(state.introSeconds)s", active: false) { actions.skipIntro() }
-            }
+            pillRow
+        }
+    }
+
+    @ViewBuilder
+    private var pillRow: some View {
+        if state.introSeconds > 0 {
+            pillButton(title: "片头\(state.introSeconds)s", active: false) { actions.skipIntro() }
+        }
+        // 小窗顶栏已经有"弹幕"和"比例"两个图标了，这里不重复放（一行塞不下那么多胶囊）
+        if !state.compact {
             pillButton(title: state.danmakuEnabled ? "弹幕开" : "弹幕", active: state.danmakuEnabled) {
                 actions.toggleDanmaku()
             }
-            pillButton(title: "选集", active: false) { actions.selectEpisode() }
-            pillButton(title: rateLabel, active: state.rate != 1.0) { actions.setRate(nextRate) }
+        }
+        pillButton(title: "选集", active: false) { actions.selectEpisode() }
+        pillButton(title: rateLabel, active: state.rate != 1.0) { actions.setRate(nextRate) }
+        if !state.compact {
             pillButton(title: state.aspectLabel, active: false) { actions.cycleAspect() }
         }
     }
@@ -224,11 +282,12 @@ struct PlayerControlsOverlay: View {
 
     // MARK: - 小零件与工具
 
-    private func iconButton(icon: String, active: Bool = false, action: @escaping () -> Void) -> some View {
+    private func iconButton(icon: String, active: Bool = false, size: CGFloat = 34,
+                            action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: icon)
-                .font(.footnote)
-                .frame(width: 34, height: 34)
+                .font(.system(size: max(11, size * 0.42)))
+                .frame(width: size, height: size)
                 .background(active ? Theme.accent : Color.black.opacity(0.35), in: Circle())
                 .foregroundStyle(.white)
         }
@@ -251,8 +310,8 @@ struct PlayerControlsOverlay: View {
             Text(title)
                 .font(.caption)
                 .lineLimit(1)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 7)
+                .padding(.horizontal, state.compact ? 9 : 12)
+                .padding(.vertical, state.compact ? 6 : 7)
                 .background(active ? Theme.accent : Color.black.opacity(0.35), in: Capsule())
                 .foregroundStyle(.white)
         }

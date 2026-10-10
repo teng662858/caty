@@ -235,19 +235,7 @@ struct FullscreenPlayerView: View {
     }
 
     private func selectEpisode() {
-        guard !episodes.isEmpty else { return }
-        let sheet = UIAlertController(title: "选集", message: nil, preferredStyle: .actionSheet)
-        for (i, episode) in episodes.enumerated() {
-            let title = i == currentIndex ? "✓ " + episode.name : episode.name
-            sheet.addAction(UIAlertAction(title: title, style: .default) { _ in
-                onSelectEpisode(i)
-            })
-        }
-        sheet.addAction(UIAlertAction(title: "取消", style: .cancel))
-        if let popover = sheet.popoverPresentationController {
-            popover.sourceView = UIApplication.shared.windows.first
-        }
-        UIApplication.shared.catyTopViewController()?.present(sheet, animated: true)
+        presentEpisodePicker(episodes, currentIndex: currentIndex) { onSelectEpisode($0) }
     }
 
     private func step(_ seconds: Double) {
@@ -327,8 +315,10 @@ struct FullscreenPlayerView: View {
     // MARK: - 小工具
 
     private var extrapolatedPosition: Double {
-        guard controller.isPlaying else { return controller.position }
-        return controller.position + Date().timeIntervalSince(controller.positionUpdatedAt) * rate
+        guard controller.isPlaying, !controller.buffering else { return controller.position }
+        // 最多只外推 0.6 秒：缓冲/卡顿时不让弹幕先跑出去再被拽回来（那样是一卡一跳）
+        let elapsed = min(max(Date().timeIntervalSince(controller.positionUpdatedAt), 0), 0.6)
+        return controller.position + elapsed * rate
     }
 
     private func prepareVolumeSlider() {

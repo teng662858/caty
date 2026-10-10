@@ -55,10 +55,17 @@ final class NodeClient {
     private let userAgent = "okhttp/3.15.0"
     private let session: URLSession
 
-    /// 已经 init 过的站点（键 = 服务地址 + 站点 key）。
+    /// 已经 init **成功**过的站点（键 = 服务地址 + 站点 key）。
     /// 用 static：运行时重启会换端口 → 自动全部失效，不需要额外清理；
     /// 放在类里（而不是实例里）是因为 loadSites() 可能重建 client。
     private static var initializedSites = Set<String>()
+    /// 正在 init 的站点（键同上）→ 值是这个 init 的任务。
+    ///
+    /// ⚠️ 这里必须是"**同一个 init 只发一次、其它调用者等它**"：
+    /// 后台预热会提前 init 前几个站点，用户这时点进同一个站点，旧写法只看到
+    /// "标记已存在"就直接返回、没有等 init 完成 → 紧接着的 home 用的是站点**过期的默认域名**，
+    /// 表现就是"切过去一直转圈 / 取不到内容"（真机上的"切换源卡死"就是这一类）。
+    private static var initTasks: [String: Task<Bool, Never>] = [:]
     private static let initLock = NSLock()
 
     init(serviceBase: String) {
@@ -99,28 +106,51 @@ final class NodeClient {
 
     // MARK: - 站点初始化（每个站点第一次用之前必须调一次）
 
-    /// 幂等：同一个运行时会话里每个站点只真的发一次请求。
-    /// 失败**不算致命**（有的站点没有 init，或它自己能退回默认域名），
-    /// 但会把标记撤掉，这样用户点「重试」时会再试一次。
+    /// 幂等：同一个运行时会话里每个站点只真的发一次请求；**同时在等的人会一起等这一次**。
+    /// 失败不算致命（有的站点没有 init，或它自己能退回默认域名），但会把标记撤掉，
+    /// 这样用户点「重试」时会再试一次。
     func initSite(_ site: SiteInfo) async {
         guard let base = base(for: site.sourceId) else { return }
         let token = base + "|" + site.key
+
         Self.initLock.lock()
         let done = Self.initializedSites.contains(token)
-        if !done { Self.initializedSites.insert(token) }
         Self.initLock.unlock()
         guard !done else { return }
 
+        let task: Task<Bool, Never>
+        Self.initLock.lock()
+        if let running = Self.initTasks[token] {
+            task = running
+            Self.initLock.unlock()
+        } else {
+            let started = Task<Bool, Never> { await self.performInit(site: site, base: base) }
+            Self.initTasks[token] = started
+            Self.initLock.unlock()
+            task = started
+        }
+
+        let ok = await task.value
+        Self.initLock.lock()
+        if ok { Self.initializedSites.insert(token) }
+        Self.initTasks[token] = nil
+        Self.initLock.unlock()
+    }
+
+    /// 真正的那一次 init 请求
+    private func performInit(site: SiteInfo, base: String) async -> Bool {
         do {
-            let payload = try await request(base: base, "POST", api: site.api, query: [:], body: [:], operation: "init")
+            let payload = try await request(base: base, "POST", api: site.api, query: [:],
+                                            body: [:], operation: "init")
             let upstream = payload.str("siteUrl") ?? payload.str("url") ?? "-"
             CatyLog.shared.info("site", "\(site.name) 初始化完成（上游地址 \(upstream)）")
+            return true
         } catch {
-            Self.initLock.lock()
-            Self.initializedSites.remove(token)
-            Self.initLock.unlock()
-            // 404 = 这个站点没有 init 路由（很常见），降级为 debug，不吓人
+            // 404 = 这个站点没有 init 路由（很常见）→ 直接记成"不用再 init"，
+            // 不然 home/category/detail/search/play 每次都要白打一遍 404
             CatyLog.shared.debug("site", "\(site.name) init 跳过：\(error.localizedDescription)")
+            if let caty = error as? CatyError, case .siteEmpty = caty { return true }
+            return false
         }
     }
 

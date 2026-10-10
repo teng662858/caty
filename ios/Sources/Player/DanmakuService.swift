@@ -62,7 +62,16 @@ final class DanmakuStore: ObservableObject {
 
     func set(_ list: [DanmakuComment], episodeKey: String? = nil) {
         self.episodeKey = episodeKey ?? self.episodeKey
-        comments = list
+        comments = Self.timeOrdered(list)
+    }
+
+    /// 渲染层靠时间**二分查找**取窗口，前提是按时间升序（解析时已经排过，这里只兜底）
+    private static func timeOrdered(_ list: [DanmakuComment]) -> [DanmakuComment] {
+        guard list.count > 1 else { return list }
+        for index in 1..<list.count where list[index].time < list[index - 1].time {
+            return list.sorted { $0.time < $1.time }
+        }
+        return list
     }
 
     func clear(episodeKey: String?) {

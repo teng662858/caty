@@ -111,9 +111,10 @@ struct DanmakuOverlay: View {
         var result: [Sprite] = []
         result.reserveCapacity(64)
 
-        // 窗口起点比"屏幕上还能看见的"再往前一点：轨道分配只跟这个窗口有关，
-        // 每帧重算同一个窗口 → 同一条弹幕不会在两帧之间换轨道（不会抖）。
-        var index = lowerBound(now - travel - 2)
+        // 窗口从"两倍滑动时长"之前开始：轨道的分配只跟这个窗口有关，
+        // 窗口取够长（2×travel）才能保证同一条弹幕在它可见的整段时间里拿到**同一条轨道**
+        // （窗口太短的话，老弹幕滑出窗口后轨道会重新分配 → 画面上会看到弹幕中途"跳轨"）。
+        var index = lowerBound(now - travel * 2)
         while index < comments.count, result.count < frameBudget {
             let comment = comments[index]
             index += 1
